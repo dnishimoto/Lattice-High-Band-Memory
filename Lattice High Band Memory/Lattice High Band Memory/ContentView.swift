@@ -4,128 +4,108 @@
 //
 //  QRTL Quantum-Dot 3D Memory Manufacturing Animation
 //
-//  Pipeline:
+//  Manufacturing sequence:
 //
 //  EXTERNAL QDs
-//      ↓
+//       ↓
 //  QD INK RESERVOIR
-//      ↓
+//       ↓
 //  EHD QD JET
-//      ↓
+//       ↓
 //  XYZ PRECISION POSITIONING
-//      ↓
-//  QD LATTICE DEPOSITION
-//      ↓
-//  LAYER-BY-LAYER 3D BUILD
-//      ↓
+//       ↓
+//  LAYER-BY-LAYER QD DEPOSITION
+//       ↓
+//  COMPLETE 3D QD CUBE
+//       ↓
 //  ROBOTIC ACCESS-WIRE PLACEMENT
-//      ↓
+//       ↓
 //  WIRE / QD REGISTRATION
-//      ↓
-//  READ / WRITE DATA PATH
+//       ↓
+//  READ / WRITE DATA TRANSFER
 //
 //  IMPORTANT:
-//  This is a visualization and engineering model.
-//  The data-rate values are configurable simulation targets,
-//  NOT experimentally established QD-memory performance.
+//  Data-rate values are configurable simulation targets.
+//  They are NOT experimentally established QD-memory performance.
+//
+//  SceneKit is used here because this project already uses SceneKit.
+//  Apple currently marks SceneKit as deprecated in favor of RealityKit.
 //
 
 import Foundation
 import SwiftUI
 import SceneKit
+import UIKit
 import Combine
 
-// MARK: - QD Memory Simulation Parameters
+// MARK: - QD MEMORY PARAMETERS
 
 struct QRTLMemoryParameters {
 
     // ---------------------------------------------------------
-    // LATTICE
+    // 3D LATTICE
     // ---------------------------------------------------------
 
     var columns: Int = 10
     var rows: Int = 8
     var layers: Int = 6
 
-    // Scene-space distance between QD sites.
     var latticeSpacing: Float = 1.0
-
-    // Visual QD radius.
     var qdRadius: CGFloat = 0.11
 
     // ---------------------------------------------------------
     // QD PRINTING
     // ---------------------------------------------------------
 
-    // Simulated QD deposition frequency.
     var qdPrintFrequencyHz: Double = 120.0
-
-    // Number of QDs deposited during one simulated jet event.
     var qdsPerJetEvent: Double = 1.0
 
-    // Positioning/printing utilization.
     var printerUtilization: Double = 0.80
-
-    // Estimated placement efficiency.
     var placementEfficiency: Double = 0.95
+
+    var qdAnimationDuration: TimeInterval = 0.035
 
     // ---------------------------------------------------------
     // ACCESS WIRES
     // ---------------------------------------------------------
 
     var wireCount: Int = 12
-
-    // Number of QD sites addressed by one wire.
     var sitesPerWire: Int = 40
+
+    var wireAnimationDuration: TimeInterval = 0.65
 
     // ---------------------------------------------------------
     // MEMORY
     // ---------------------------------------------------------
 
-    // Bits stored per QD.
-    //
-    // 1 = binary QD state.
-    // 2 = four-state model.
-    // etc.
     var bitsPerQD: Double = 1.0
 
-    // Parallel read/write channels.
     var readChannels: Double = 12
     var writeChannels: Double = 12
 
-    // Read/write operating frequency.
     var readFrequencyHz: Double = 100_000
     var writeFrequencyHz: Double = 100_000
 
-    // Fraction of cycles actually transferring data.
     var readUtilization: Double = 0.85
     var writeUtilization: Double = 0.85
 
-    // Read/write success probability.
     var readEfficiency: Double = 0.995
     var writeEfficiency: Double = 0.995
 
     // ---------------------------------------------------------
-    // ANIMATION
+    // DATA ANIMATION
     // ---------------------------------------------------------
 
-    var qdAnimationDuration: TimeInterval = 0.12
-    var wireAnimationDuration: TimeInterval = 0.8
-
-    // Number of QDs animated before advancing the layer.
-    var qdsPerAnimationBatch: Int = 10
+    var dataParticleCount: Int = 12
 }
 
-
-// MARK: - Data Rate Model
+// MARK: - DATA RATE MODEL
 
 struct QRTLDataRateModel {
 
-    var parameters: QRTLMemoryParameters
+    let parameters: QRTLMemoryParameters
 
-    // ---------------------------------------------------------
-    // Total number of QD storage sites
-    // ---------------------------------------------------------
+    // N_QD = columns × rows × layers
 
     var totalQDSites: Double {
         Double(
@@ -135,14 +115,11 @@ struct QRTLDataRateModel {
         )
     }
 
-    // ---------------------------------------------------------
-    // Storage capacity
-    //
     // C = N_QD × B_QD
-    // ---------------------------------------------------------
 
     var storageBits: Double {
-        totalQDSites * parameters.bitsPerQD
+        totalQDSites *
+        parameters.bitsPerQD
     }
 
     var storageBytes: Double {
@@ -150,12 +127,10 @@ struct QRTLDataRateModel {
     }
 
     // ---------------------------------------------------------
-    // INPUT / WRITE RATE
+    // WRITE
     //
     // R_in =
-    // N_channels × f_write × bits/QD
-    // × utilization × efficiency
-    //
+    // N_w × f_w × B_QD × U_w × η_w
     // ---------------------------------------------------------
 
     var writeBitsPerSecond: Double {
@@ -168,12 +143,10 @@ struct QRTLDataRateModel {
     }
 
     // ---------------------------------------------------------
-    // OUTPUT / READ RATE
+    // READ
     //
     // R_out =
-    // N_channels × f_read × bits/QD
-    // × utilization × efficiency
-    //
+    // N_r × f_r × B_QD × U_r × η_r
     // ---------------------------------------------------------
 
     var readBitsPerSecond: Double {
@@ -197,7 +170,7 @@ struct QRTLDataRateModel {
     // QD PRINTING RATE
     //
     // R_QD =
-    // f_jet × QDs/event × utilization × efficiency
+    // f_jet × QDs/event × U × η
     // ---------------------------------------------------------
 
     var qdsPrintedPerSecond: Double {
@@ -209,9 +182,7 @@ struct QRTLDataRateModel {
     }
 
     // ---------------------------------------------------------
-    // THEORETICAL WRITE BANDWIDTH
-    //
-    // Useful upper bound before interface limitations.
+    // THEORETICAL LIMITS
     // ---------------------------------------------------------
 
     var theoreticalWriteBitsPerSecond: Double {
@@ -221,10 +192,6 @@ struct QRTLDataRateModel {
         parameters.bitsPerQD
     }
 
-    // ---------------------------------------------------------
-    // THEORETICAL READ BANDWIDTH
-    // ---------------------------------------------------------
-
     var theoreticalReadBitsPerSecond: Double {
 
         parameters.readChannels *
@@ -233,12 +200,15 @@ struct QRTLDataRateModel {
     }
 
     // ---------------------------------------------------------
-    // Human-readable formatting
+    // FORMATTING
     // ---------------------------------------------------------
 
-    static func formatRate(_ bitsPerSecond: Double) -> String {
+    static func formatRate(
+        _ bitsPerSecond: Double
+    ) -> String {
 
         if bitsPerSecond >= 1_000_000_000 {
+
             return String(
                 format: "%.2f Gb/s",
                 bitsPerSecond / 1_000_000_000
@@ -246,6 +216,7 @@ struct QRTLDataRateModel {
         }
 
         if bitsPerSecond >= 1_000_000 {
+
             return String(
                 format: "%.2f Mb/s",
                 bitsPerSecond / 1_000_000
@@ -253,6 +224,7 @@ struct QRTLDataRateModel {
         }
 
         if bitsPerSecond >= 1_000 {
+
             return String(
                 format: "%.2f kb/s",
                 bitsPerSecond / 1_000
@@ -265,9 +237,12 @@ struct QRTLDataRateModel {
         )
     }
 
-    static func formatBytes(_ bytesPerSecond: Double) -> String {
+    static func formatBytes(
+        _ bytesPerSecond: Double
+    ) -> String {
 
         if bytesPerSecond >= 1_000_000_000 {
+
             return String(
                 format: "%.2f GB/s",
                 bytesPerSecond / 1_000_000_000
@@ -275,6 +250,7 @@ struct QRTLDataRateModel {
         }
 
         if bytesPerSecond >= 1_000_000 {
+
             return String(
                 format: "%.2f MB/s",
                 bytesPerSecond / 1_000_000
@@ -282,6 +258,7 @@ struct QRTLDataRateModel {
         }
 
         if bytesPerSecond >= 1_000 {
+
             return String(
                 format: "%.2f KB/s",
                 bytesPerSecond / 1_000
@@ -295,8 +272,7 @@ struct QRTLDataRateModel {
     }
 }
 
-
-// MARK: - Manufacturing State
+// MARK: - MANUFACTURING STATE
 
 @MainActor
 final class QRTLManufacturingState: ObservableObject {
@@ -304,27 +280,31 @@ final class QRTLManufacturingState: ObservableObject {
     @Published var currentLayer: Int = 0
 
     @Published var depositedQDs: Int = 0
-
     @Published var totalQDs: Int = 0
 
     @Published var placedWires: Int = 0
-
     @Published var totalWires: Int = 0
 
-    @Published var manufacturingState: String =
+    @Published var manufacturingState =
         "INITIALIZING"
 
-    @Published var writeRate: String = "0 b/s"
+    @Published var writeRate =
+        "0 b/s"
 
-    @Published var readRate: String = "0 b/s"
+    @Published var readRate =
+        "0 b/s"
 
-    @Published var writeBytes: String = "0 B/s"
+    @Published var writeBytes =
+        "0 B/s"
 
-    @Published var readBytes: String = "0 B/s"
+    @Published var readBytes =
+        "0 B/s"
 
-    @Published var storageCapacity: String = "0 B"
+    @Published var storageCapacity =
+        "0 B"
 
-    @Published var qdPrintRate: String = "0 QD/s"
+    @Published var qdPrintRate =
+        "0 QD/s"
 
     func update(
         layer: Int,
@@ -337,10 +317,13 @@ final class QRTLManufacturingState: ObservableObject {
     ) {
 
         currentLayer = layer
+
         depositedQDs = deposited
         totalQDs = total
+
         placedWires = wires
         self.totalWires = totalWires
+
         manufacturingState = state
 
         writeRate =
@@ -376,8 +359,7 @@ final class QRTLManufacturingState: ObservableObject {
     }
 }
 
-
-// MARK: - QRTL Scene Builder
+// MARK: - QRTL SCENE
 
 final class QRTLQDJet3DPrintingScene {
 
@@ -385,36 +367,80 @@ final class QRTLQDJet3DPrintingScene {
 
     private let parameters: QRTLMemoryParameters
 
-    private weak var state: QRTLManufacturingState?
+    private weak var state:
+        QRTLManufacturingState?
 
-    // Scene hierarchy
-    private let manufacturingRoot = SCNNode()
-    private let printerRoot = SCNNode()
-    private let latticeRoot = SCNNode()
-    private let robotRoot = SCNNode()
-    private let wireRoot = SCNNode()
-    private let dataRoot = SCNNode()
+    // ---------------------------------------------------------
+    // ROOTS
+    // ---------------------------------------------------------
 
-    // Animated printer nozzle
-    private let nozzle = SCNNode()
+    private let manufacturingRoot =
+        SCNNode()
 
-    // QD source
-    private let reservoir = SCNNode()
+    private let printerRoot =
+        SCNNode()
 
-    // Robotic arm
-    private let robotArm = SCNNode()
-    private let robotGripper = SCNNode()
+    private let latticeRoot =
+        SCNNode()
 
-    // Storage sites
-    private var qdNodes: [SCNNode] = []
+    private let robotRoot =
+        SCNNode()
 
-    // Access wires
-    private var accessWires: [SCNNode] = []
+    private let wireRoot =
+        SCNNode()
 
-    // Data particles
-    private var dataParticles: [SCNNode] = []
+    private let dataRoot =
+        SCNNode()
 
-    // Animation state
+    // ---------------------------------------------------------
+    // PRINTER
+    // ---------------------------------------------------------
+
+    private let nozzle =
+        SCNNode()
+
+    private let nozzleCarriage =
+        SCNNode()
+
+    private let reservoir =
+        SCNNode()
+
+    // ---------------------------------------------------------
+    // ROBOT
+    // ---------------------------------------------------------
+
+    private let robotArm =
+        SCNNode()
+
+    private let robotForearm =
+        SCNNode()
+
+    private let robotGripper =
+        SCNNode()
+
+    // ---------------------------------------------------------
+    // LATTICE
+    // ---------------------------------------------------------
+
+    private var qdNodes:
+        [SCNNode] = []
+
+    private var accessWires:
+        [SCNNode] = []
+
+    private var dataParticles:
+        [SCNNode] = []
+
+    private var layerVolumes:
+        [SCNNode] = []
+
+    private var latticeCube:
+        SCNNode?
+
+    // ---------------------------------------------------------
+    // ANIMATION
+    // ---------------------------------------------------------
+
     private var animationGeneration = 0
 
     init(
@@ -435,15 +461,15 @@ final class QRTLQDJet3DPrintingScene {
         buildDataInterface()
     }
 
-
-    // MARK: Scene Configuration
+    // MARK: - SCENE CONFIGURATION
 
     private func configureScene() {
 
-        scene.background.contents = UIColor(
-            white: 0.015,
-            alpha: 1.0
-        )
+        scene.background.contents =
+            UIColor(
+                white: 0.008,
+                alpha: 1.0
+            )
 
         scene.rootNode.addChildNode(
             manufacturingRoot
@@ -469,22 +495,27 @@ final class QRTLQDJet3DPrintingScene {
             dataRoot
         )
 
+        // Camera
+
         let cameraNode = SCNNode()
 
-        cameraNode.camera = SCNCamera()
+        cameraNode.camera =
+            SCNCamera()
 
-        cameraNode.camera?.fieldOfView = 55
+        cameraNode.camera?.fieldOfView =
+            48
 
-        cameraNode.position = SCNVector3(
-            13,
-            11,
-            18
-        )
+        cameraNode.position =
+            SCNVector3(
+                15,
+                11,
+                19
+            )
 
         cameraNode.lookAt(
             SCNVector3(
                 0,
-                2,
+                3.0,
                 0
             )
         )
@@ -493,237 +524,323 @@ final class QRTLQDJet3DPrintingScene {
             cameraNode
         )
 
+        // Ambient light
+
         let ambient = SCNNode()
 
-        ambient.light = SCNLight()
-        ambient.light?.type = .ambient
-        ambient.light?.intensity = 700
+        ambient.light =
+            SCNLight()
+
+        ambient.light?.type =
+            .ambient
+
+        ambient.light?.intensity =
+            650
 
         scene.rootNode.addChildNode(
             ambient
         )
 
+        // Key light
+
         let keyLight = SCNNode()
 
-        keyLight.light = SCNLight()
-        keyLight.light?.type = .omni
-        keyLight.light?.intensity = 1200
+        keyLight.light =
+            SCNLight()
 
-        keyLight.position = SCNVector3(
-            8,
-            12,
-            8
-        )
+        keyLight.light?.type =
+            .omni
+
+        keyLight.light?.intensity =
+            1400
+
+        keyLight.position =
+            SCNVector3(
+                8,
+                13,
+                10
+            )
 
         scene.rootNode.addChildNode(
             keyLight
         )
+
+        // Secondary light
+
+        let fillLight = SCNNode()
+
+        fillLight.light =
+            SCNLight()
+
+        fillLight.light?.type =
+            .omni
+
+        fillLight.light?.intensity =
+            900
+
+        fillLight.position =
+            SCNVector3(
+                -10,
+                8,
+                -8
+            )
+
+        scene.rootNode.addChildNode(
+            fillLight
+        )
     }
 
-
-    // MARK: Environment
+    // MARK: - ENVIRONMENT
 
     private func buildEnvironment() {
 
-        let base = SCNBox(
-            width: 18,
-            height: 0.35,
-            length: 14,
-            chamferRadius: 0.15
-        )
+        let baseGeometry =
+            SCNBox(
+                width: 20,
+                height: 0.35,
+                length: 15,
+                chamferRadius: 0.12
+            )
 
-        base.firstMaterial?.diffuse.contents =
+        baseGeometry.firstMaterial?.diffuse.contents =
             UIColor(
                 white: 0.08,
                 alpha: 1
             )
 
-        let baseNode = SCNNode(
-            geometry: base
-        )
+        let base =
+            SCNNode(
+                geometry: baseGeometry
+            )
 
-        baseNode.position = SCNVector3(
-            0,
-            -0.2,
-            0
-        )
+        base.position =
+            SCNVector3(
+                0,
+                -0.25,
+                0
+            )
 
         manufacturingRoot.addChildNode(
-            baseNode
+            base
         )
 
-        // Printer platform
+        // Build platform
 
-        let printerPlatform = SCNBox(
-            width: 7,
-            height: 0.25,
-            length: 7,
-            chamferRadius: 0.08
-        )
+        let platformGeometry =
+            SCNBox(
+                width: 9,
+                height: 0.3,
+                length: 9,
+                chamferRadius: 0.08
+            )
 
-        printerPlatform.firstMaterial?.diffuse.contents =
+        platformGeometry.firstMaterial?.diffuse.contents =
             UIColor(
                 white: 0.15,
                 alpha: 1
             )
 
-        let platformNode = SCNNode(
-            geometry: printerPlatform
-        )
+        let platform =
+            SCNNode(
+                geometry: platformGeometry
+            )
 
-        platformNode.position = SCNVector3(
-            -1.5,
-            0.1,
-            0
-        )
+        platform.position =
+            SCNVector3(
+                -1.0,
+                0.05,
+                0
+            )
 
         manufacturingRoot.addChildNode(
-            platformNode
+            platform
         )
     }
 
-
-    // MARK: QD Jet Printer
+    // MARK: - QD JET PRINTER
 
     private func buildQDJetPrinter() {
 
-        // Reservoir
+        // -----------------------------------------------------
+        // RESERVOIR
+        // -----------------------------------------------------
 
-        let reservoirGeometry = SCNCylinder(
-            radius: 0.65,
-            height: 1.6
-        )
+        let reservoirGeometry =
+            SCNCylinder(
+                radius: 0.7,
+                height: 1.8
+            )
 
         reservoirGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemBlue
 
-        reservoir.geometry = reservoirGeometry
-
-        reservoir.position = SCNVector3(
-            -7,
-            3.2,
-            -1
+        reservoirGeometry.firstMaterial?.emission.contents =
+        UIColor(
+            red: 0.0,
+            green: 0.0,
+            blue: 0.15,
+            alpha: 1.0
         )
+
+        reservoir.geometry =
+            reservoirGeometry
+
+        reservoir.position =
+            SCNVector3(
+                -7.0,
+                4.0,
+                -1.0
+            )
 
         printerRoot.addChildNode(
             reservoir
         )
 
-        // Supply tube
+        // -----------------------------------------------------
+        // SUPPLY TUBE
+        // -----------------------------------------------------
 
-        let supplyTube = makeCylinder(
-            radius: 0.10,
-            height: 3.5,
-            color: UIColor.systemBlue
-        )
+        let supplyTube =
+            makeCylinder(
+                radius: 0.10,
+                height: 3.6,
+                color: UIColor.systemBlue
+            )
 
-        supplyTube.position = SCNVector3(
-            -5.3,
-            3.2,
-            -1
-        )
+        supplyTube.position =
+            SCNVector3(
+                -5.2,
+                4.0,
+                -1.0
+            )
 
-        supplyTube.eulerAngles.z = .pi / 2
+        supplyTube.eulerAngles.z =
+            .pi / 2
 
         printerRoot.addChildNode(
             supplyTube
         )
 
-        // Printer gantry
+        // -----------------------------------------------------
+        // GANTRY
+        // -----------------------------------------------------
 
-        let gantry = SCNBox(
-            width: 8,
-            height: 0.35,
-            length: 0.35,
-            chamferRadius: 0.05
-        )
+        let gantryGeometry =
+            SCNBox(
+                width: 9,
+                height: 0.35,
+                length: 0.35,
+                chamferRadius: 0.05
+            )
 
-        gantry.firstMaterial?.diffuse.contents =
+        gantryGeometry.firstMaterial?.diffuse.contents =
             UIColor(
                 white: 0.25,
                 alpha: 1
             )
 
-        let gantryNode = SCNNode(
-            geometry: gantry
-        )
+        let gantry =
+            SCNNode(
+                geometry: gantryGeometry
+            )
 
-        gantryNode.position = SCNVector3(
-            -1.5,
-            7,
-            0
-        )
+        gantry.position =
+            SCNVector3(
+                -1.5,
+                7.0,
+                0
+            )
 
         printerRoot.addChildNode(
-            gantryNode
+            gantry
         )
 
-        // Nozzle carriage
+        // -----------------------------------------------------
+        // CARRIAGE
+        // -----------------------------------------------------
 
-        let carriage = SCNBox(
-            width: 0.55,
-            height: 0.55,
-            length: 0.55,
-            chamferRadius: 0.08
-        )
+        let carriageGeometry =
+            SCNBox(
+                width: 0.65,
+                height: 0.65,
+                length: 0.65,
+                chamferRadius: 0.08
+            )
 
-        carriage.firstMaterial?.diffuse.contents =
+        carriageGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemGray
 
-        let carriageNode = SCNNode(
-            geometry: carriage
-        )
+        nozzleCarriage.geometry =
+            carriageGeometry
 
-        carriageNode.position = SCNVector3(
-            -2,
-            6.6,
-            0
-        )
+        nozzleCarriage.position =
+            SCNVector3(
+                -2,
+                6.5,
+                0
+            )
 
         printerRoot.addChildNode(
-            carriageNode
+            nozzleCarriage
         )
 
-        // Nozzle
+        // -----------------------------------------------------
+        // NOZZLE
+        // -----------------------------------------------------
 
-        let nozzleGeometry = SCNCone(
-            topRadius: 0.08,
-            bottomRadius: 0.02,
-            height: 0.8
-        )
+        let nozzleGeometry =
+            SCNCone(
+                topRadius: 0.11,
+                bottomRadius: 0.025,
+                height: 0.85
+            )
 
         nozzleGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemOrange
 
-        nozzle.geometry = nozzleGeometry
+        nozzleGeometry.firstMaterial?.emission.contents =
+            UIColor.systemOrange
 
-        nozzle.position = SCNVector3(
-            -2,
-            6.0,
-            0
-        )
+        nozzle.geometry =
+            nozzleGeometry
+
+        nozzle.position =
+            SCNVector3(
+                -2,
+                5.9,
+                0
+            )
 
         printerRoot.addChildNode(
             nozzle
         )
     }
 
-
-    // MARK: 3D QD Lattice
+    // MARK: - 3D LATTICE
 
     private func buildLattice() {
 
+        qdNodes.removeAll()
+
         let startX =
             -Float(parameters.columns - 1)
-            * parameters.latticeSpacing
-            * 0.5
+            *
+            parameters.latticeSpacing
+            *
+            0.5
 
         let startZ =
             -Float(parameters.rows - 1)
-            * parameters.latticeSpacing
-            * 0.5
+            *
+            parameters.latticeSpacing
+            *
+            0.5
 
-        let startY: Float = 0.7
+        let startY: Float = 0.75
+
+        // -----------------------------------------------------
+        // QD STORAGE SITES
+        // -----------------------------------------------------
 
         for layer in 0..<parameters.layers {
 
@@ -731,9 +848,11 @@ final class QRTLQDJet3DPrintingScene {
 
                 for column in 0..<parameters.columns {
 
-                    let geometry = SCNSphere(
-                        radius: parameters.qdRadius
-                    )
+                    let geometry =
+                        SCNSphere(
+                            radius:
+                                parameters.qdRadius
+                        )
 
                     geometry.firstMaterial?.diffuse.contents =
                         UIColor.systemTeal
@@ -741,153 +860,321 @@ final class QRTLQDJet3DPrintingScene {
                     geometry.firstMaterial?.emission.contents =
                         UIColor.systemTeal
 
-                    let qd = SCNNode(
-                        geometry: geometry
-                    )
+                    let qd =
+                        SCNNode(
+                            geometry: geometry
+                        )
 
                     qd.name =
                         "QD_\(column)_\(row)_\(layer)"
 
-                    qd.position = SCNVector3(
-                        startX +
-                        Float(column)
-                        * parameters.latticeSpacing,
+                    qd.position =
+                        SCNVector3(
+                            startX +
+                            Float(column)
+                            *
+                            parameters.latticeSpacing,
 
-                        startY +
-                        Float(layer)
-                        * parameters.latticeSpacing,
+                            startY +
+                            Float(layer)
+                            *
+                            parameters.latticeSpacing,
 
-                        startZ +
-                        Float(row)
-                        * parameters.latticeSpacing
-                    )
+                            startZ +
+                            Float(row)
+                            *
+                            parameters.latticeSpacing
+                        )
 
-                    // Start hidden.
                     qd.opacity = 0
+
+                    qdNodes.append(qd)
 
                     latticeRoot.addChildNode(
                         qd
                     )
-
-                    qdNodes.append(qd)
                 }
             }
         }
 
-        // Lattice boundary
+        // -----------------------------------------------------
+        // BUILD LAYER VOLUMES
+        //
+        // Each layer becomes visible as the QDs are printed.
+        // This creates the visual impression of a growing cube.
+        // -----------------------------------------------------
 
         let width =
-            CGFloat(parameters.columns - 1)
-            * CGFloat(parameters.latticeSpacing)
+            CGFloat(
+                parameters.columns
+            )
+            *
+            CGFloat(
+                parameters.latticeSpacing
+            )
 
         let depth =
-            CGFloat(parameters.rows - 1)
-            * CGFloat(parameters.latticeSpacing)
+            CGFloat(
+                parameters.rows
+            )
+            *
+            CGFloat(
+                parameters.latticeSpacing
+            )
 
-        let height =
-            CGFloat(parameters.layers - 1)
-            * CGFloat(parameters.latticeSpacing)
+        let layerHeight =
+            CGFloat(
+                parameters.latticeSpacing
+            )
 
-        let latticeFrame = SCNBox(
-            width: width + 0.7,
-            height: height + 0.7,
-            length: depth + 0.7,
-            chamferRadius: 0.05
-        )
+        for layer in 0..<parameters.layers {
 
-        latticeFrame.firstMaterial?.diffuse.contents =
-            UIColor(
-                white: 0.15,
+            let geometry =
+                SCNBox(
+                    width: width,
+                    height: layerHeight,
+                    length: depth,
+                    chamferRadius: 0.03
+                )
+
+            let material =
+                SCNMaterial()
+
+            material.diffuse.contents = UIColor(
+                red: 0.0,
+                green: 1.0,
+                blue: 1.0,
                 alpha: 0.08
             )
 
-        latticeFrame.firstMaterial?.isDoubleSided = true
+            material.emission.contents = UIColor(
+                red: 0.0,
+                green: 0.05,
+                blue: 0.05,
+                alpha: 0.04
+            )
+            material.isDoubleSided =
+                true
 
-        let frameNode = SCNNode(
-            geometry: latticeFrame
-        )
+            geometry.materials =
+                [material]
 
-        frameNode.position = SCNVector3(
-            0,
-            0.7 + Float(height / 2),
-            0
-        )
+            let volume =
+                SCNNode(
+                    geometry: geometry
+                )
 
-        latticeRoot.addChildNode(
-            frameNode
-        )
+            volume.position =
+                SCNVector3(
+                    0,
+                    0.75 +
+                    Float(layer)
+                    *
+                    parameters.latticeSpacing,
+                    0
+                )
+
+            volume.opacity = 0
+
+            latticeRoot.addChildNode(
+                volume
+            )
+
+            layerVolumes.append(
+                volume
+            )
+        }
+
+        // -----------------------------------------------------
+        // FINAL CUBE OUTLINE
+        // -----------------------------------------------------
+
+        createFinalCubeOutline()
     }
 
+    private func createFinalCubeOutline() {
 
-    // MARK: Robotic Access-Wire System
+        let width =
+            CGFloat(parameters.columns)
+            *
+            CGFloat(parameters.latticeSpacing)
+
+        let depth =
+            CGFloat(parameters.rows)
+            *
+            CGFloat(parameters.latticeSpacing)
+
+        let height =
+            CGFloat(parameters.layers)
+            *
+            CGFloat(parameters.latticeSpacing)
+
+        let cube =
+            SCNBox(
+                width: width + 0.15,
+                height: height + 0.15,
+                length: depth + 0.15,
+                chamferRadius: 0.03
+            )
+
+        let material =
+            SCNMaterial()
+
+        material.diffuse.contents =
+            UIColor.systemCyan
+
+        material.emission.contents =
+            UIColor.systemCyan
+
+        material.fillMode =
+            .lines
+
+        material.transparency =
+            0.55
+
+        cube.materials =
+            [material]
+
+        let cubeNode =
+            SCNNode(
+                geometry: cube
+            )
+
+        cubeNode.position =
+            SCNVector3(
+                0,
+                0.75 +
+                Float(height / 2.0),
+                0
+            )
+
+        cubeNode.opacity = 0
+
+        latticeRoot.addChildNode(
+            cubeNode
+        )
+
+        latticeCube =
+            cubeNode
+    }
+
+    // MARK: - ROBOTIC ARM
 
     private func buildRoboticWireSystem() {
 
-        // Robot base
+        // -----------------------------------------------------
+        // ROBOT BASE
+        // -----------------------------------------------------
 
-        let robotBaseGeometry = SCNCylinder(
-            radius: 1.0,
-            height: 0.5
-        )
+        let baseGeometry =
+            SCNCylinder(
+                radius: 1.0,
+                height: 0.55
+            )
 
-        robotBaseGeometry.firstMaterial?.diffuse.contents =
+        baseGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemGray
 
-        let robotBase = SCNNode(
-            geometry: robotBaseGeometry
-        )
+        let base =
+            SCNNode(
+                geometry: baseGeometry
+            )
 
-        robotBase.position = SCNVector3(
-            7,
-            0.4,
-            0
-        )
+        base.position =
+            SCNVector3(
+                7.0,
+                0.45,
+                0
+            )
 
         robotRoot.addChildNode(
-            robotBase
+            base
         )
 
-        // Main arm
+        // -----------------------------------------------------
+        // ARM
+        // -----------------------------------------------------
 
-        let armGeometry = SCNCylinder(
-            radius: 0.25,
-            height: 4.0
-        )
+        let armGeometry =
+            SCNCylinder(
+                radius: 0.25,
+                height: 3.2
+            )
 
         armGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemGray2
 
-        robotArm.geometry = armGeometry
+        robotArm.geometry =
+            armGeometry
 
-        robotArm.position = SCNVector3(
-            7,
-            2.5,
-            0
-        )
+        robotArm.position =
+            SCNVector3(
+                7.0,
+                2.2,
+                0
+            )
 
         robotRoot.addChildNode(
             robotArm
         )
 
-        // Gripper
+        // -----------------------------------------------------
+        // FOREARM
+        // -----------------------------------------------------
 
-        let gripperGeometry = SCNBox(
-            width: 0.5,
-            height: 0.25,
-            length: 0.5,
-            chamferRadius: 0.04
+        let forearmGeometry =
+            SCNCylinder(
+                radius: 0.20,
+                height: 2.6
+            )
+
+        forearmGeometry.firstMaterial?.diffuse.contents =
+            UIColor.systemGray3
+
+        robotForearm.geometry =
+            forearmGeometry
+
+        robotForearm.position =
+            SCNVector3(
+                7.0,
+                4.8,
+                0
+            )
+
+        robotRoot.addChildNode(
+            robotForearm
         )
+
+        // -----------------------------------------------------
+        // GRIPPER
+        // -----------------------------------------------------
+
+        let gripperGeometry =
+            SCNBox(
+                width: 0.55,
+                height: 0.28,
+                length: 0.55,
+                chamferRadius: 0.04
+            )
 
         gripperGeometry.firstMaterial?.diffuse.contents =
             UIColor.systemOrange
+
+        gripperGeometry.firstMaterial?.emission.contents =
+            UIColor(
+                red: 0.15,
+                green: 0.06,
+                blue: 0,
+                alpha: 1
+            )
 
         robotGripper.geometry =
             gripperGeometry
 
         robotGripper.position =
             SCNVector3(
-                7,
-                4.7,
+                7.0,
+                6.0,
                 0
             )
 
@@ -896,55 +1183,91 @@ final class QRTLQDJet3DPrintingScene {
         )
     }
 
-
-    // MARK: Access Wires
+    // MARK: - ACCESS-WIRE
 
     private func createAccessWire(
-        index: Int
+        index: Int,
+        x: Float,
+        z: Float
     ) -> SCNNode {
 
-        let wireGeometry = SCNCylinder(
-            radius: 0.035,
-            height: 5.0
-        )
+        // Wire spans the entire completed cube.
 
-        wireGeometry.firstMaterial?.diffuse.contents =
+        let cubeHeight =
+            Float(parameters.layers)
+            *
+            parameters.latticeSpacing
+
+        let geometry =
+            SCNCylinder(
+                radius: 0.045,
+                height:
+                    CGFloat(cubeHeight + 0.8)
+            )
+
+        geometry.firstMaterial?.diffuse.contents =
             UIColor.systemYellow
 
-        let wire = SCNNode(
-            geometry: wireGeometry
-        )
+        geometry.firstMaterial?.emission.contents =
+            UIColor(
+                red: 0.20,
+                green: 0.16,
+                blue: 0,
+                alpha: 1
+            )
+
+        let wire =
+            SCNNode(
+                geometry: geometry
+            )
 
         wire.name =
             "ACCESS_WIRE_\(index)"
 
+        wire.position =
+            SCNVector3(
+                x,
+                0.75 +
+                cubeHeight / 2.0,
+                z
+            )
+
         return wire
     }
 
-
-    // MARK: Data Interface
+    // MARK: - DATA INTERFACE
 
     private func buildDataInterface() {
 
-        let interfaceGeometry = SCNBox(
-            width: 3.5,
-            height: 0.6,
-            length: 3.5,
-            chamferRadius: 0.1
-        )
+        let geometry =
+            SCNBox(
+                width: 3.5,
+                height: 0.65,
+                length: 3.5,
+                chamferRadius: 0.10
+            )
 
-        interfaceGeometry.firstMaterial?.diffuse.contents =
+        geometry.firstMaterial?.diffuse.contents =
             UIColor.systemIndigo
 
-        let interfaceNode = SCNNode(
-            geometry: interfaceGeometry
-        )
+        geometry.firstMaterial?.emission.contents =
+            UIColor(
+                red: 0.05,
+                green: 0,
+                blue: 0.15,
+                alpha: 1
+            )
+
+        let interfaceNode =
+            SCNNode(
+                geometry: geometry
+            )
 
         interfaceNode.position =
             SCNVector3(
                 7,
-                0.8,
-                -4.0
+                0.85,
+                -4
             )
 
         dataRoot.addChildNode(
@@ -952,8 +1275,7 @@ final class QRTLQDJet3DPrintingScene {
         )
     }
 
-
-    // MARK: Start Manufacturing Animation
+    // MARK: - START MANUFACTURING
 
     func startManufacturing() {
 
@@ -962,20 +1284,48 @@ final class QRTLQDJet3DPrintingScene {
         let generation =
             animationGeneration
 
-        // Reset everything.
+        // Reset QDs
 
-        for node in qdNodes {
-            node.removeAllActions()
-            node.opacity = 0
+        for qd in qdNodes {
+
+            qd.removeAllActions()
+
+            qd.opacity = 0
+
+            qd.scale =
+                SCNVector3(
+                    0.01,
+                    0.01,
+                    0.01
+                )
         }
 
+        // Reset layer volumes
+
+        for volume in layerVolumes {
+
+            volume.removeAllActions()
+
+            volume.opacity = 0
+        }
+
+        latticeCube?.removeAllActions()
+
+        latticeCube?.opacity = 0
+
+        // Remove wires
+
         for wire in accessWires {
+
             wire.removeFromParentNode()
         }
 
         accessWires.removeAll()
 
+        // Remove data particles
+
         for particle in dataParticles {
+
             particle.removeFromParentNode()
         }
 
@@ -988,9 +1338,10 @@ final class QRTLQDJet3DPrintingScene {
             wires: 0,
             totalWires: parameters.wireCount,
             state: "QD-JET INITIALIZING",
-            rateModel: QRTLDataRateModel(
-                parameters: parameters
-            )
+            rateModel:
+                QRTLDataRateModel(
+                    parameters: parameters
+                )
         )
 
         animateLayer(
@@ -999,63 +1350,88 @@ final class QRTLQDJet3DPrintingScene {
         )
     }
 
-
-    // MARK: Layer Animation
+    // MARK: - LAYER PRINTING
 
     private func animateLayer(
         layer: Int,
         generation: Int
     ) {
 
-        guard generation == animationGeneration else {
+        guard generation ==
+                animationGeneration
+        else {
             return
         }
 
-        guard layer < parameters.layers else {
+        guard layer <
+                parameters.layers
+        else {
 
-            animateRoboticWirePlacement(
-                generation: generation
-            )
+            finishLattice()
+
+            DispatchQueue.main.asyncAfter(
+                deadline:
+                    .now() + 1.0
+            ) {
+
+                self.animateRoboticWirePlacement(
+                    generation: generation
+                )
+            }
 
             return
         }
 
-        state?.update(
-            layer: layer + 1,
-            deposited: layer
-                * parameters.columns
-                * parameters.rows,
-            total: qdNodes.count,
-            wires: 0,
-            totalWires: parameters.wireCount,
-            state: "PRINTING QD LAYER \(layer + 1)",
-            rateModel: QRTLDataRateModel(
-                parameters: parameters
-            )
-        )
+        let sitesPerLayer =
+            parameters.columns *
+            parameters.rows
 
         let start =
             layer *
-            parameters.columns *
-            parameters.rows
+            sitesPerLayer
 
         let end =
             start +
-            parameters.columns *
-            parameters.rows
+            sitesPerLayer
+
+        state?.update(
+            layer: layer + 1,
+            deposited: start,
+            total: qdNodes.count,
+            wires: 0,
+            totalWires: parameters.wireCount,
+            state:
+                "PRINTING 3D QD LAYER \(layer + 1)",
+            rateModel:
+                QRTLDataRateModel(
+                    parameters: parameters
+                )
+        )
 
         var index = start
 
         func printNextQD() {
 
-            guard generation == self.animationGeneration else {
+            guard generation ==
+                    self.animationGeneration
+            else {
                 return
             }
 
-            guard index < end else {
+            guard index < end
+            else {
+
+                // Complete visual layer.
+
+                self.layerVolumes[layer].runAction(
+                    SCNAction.fadeIn(
+                        duration: 0.25
+                    )
+                )
 
                 DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.5
+                    deadline:
+                        .now() + 0.25
                 ) {
 
                     self.animateLayer(
@@ -1073,45 +1449,52 @@ final class QRTLQDJet3DPrintingScene {
             let target =
                 qd.position
 
-            let nozzleStart =
+            // -------------------------------------------------
+            // MOVE NOZZLE TO X/Z TARGET
+            // -------------------------------------------------
+
+            let nozzleTarget =
                 SCNVector3(
                     target.x,
-                    6.0,
+                    5.9,
                     target.z
                 )
 
-            self.nozzle.position =
-                nozzleStart
+            // Carriage follows nozzle.
 
             let moveNozzle =
                 SCNAction.move(
-                    to: nozzleStart,
-                    duration: 0.05
+                    to: nozzleTarget,
+                    duration: 0.025
                 )
 
-            let printQD =
-                SCNAction.run { node in
+            let printAction =
+                SCNAction.run { _ in
 
-                    // Create visible QD jet.
+                    // Show the QD jet.
 
                     self.animateQDJet(
-                        from: node.position,
-                        to: target
+                        from:
+                            self.nozzle.position,
+                        to:
+                            target
                     )
 
-                    qd.opacity = 1.0
+                    // QD appears at target.
+
+                    qd.opacity = 1
 
                     qd.scale =
                         SCNVector3(
-                            0.1,
-                            0.1,
-                            0.1
+                            0.01,
+                            0.01,
+                            0.01
                         )
 
                     qd.runAction(
                         SCNAction.scale(
                             to: 1.0,
-                            duration: 0.10
+                            duration: 0.045
                         )
                     )
 
@@ -1119,11 +1502,15 @@ final class QRTLQDJet3DPrintingScene {
                         index + 1
 
                     self.state?.update(
-                        layer: layer + 1,
-                        deposited: deposited,
-                        total: self.qdNodes.count,
+                        layer:
+                            layer + 1,
+                        deposited:
+                            deposited,
+                        total:
+                            self.qdNodes.count,
                         wires: 0,
-                        totalWires: self.parameters.wireCount,
+                        totalWires:
+                            self.parameters.wireCount,
                         state:
                             "DEPOSITING QD \(deposited)",
                         rateModel:
@@ -1138,8 +1525,20 @@ final class QRTLQDJet3DPrintingScene {
                 SCNAction.sequence(
                     [
                         moveNozzle,
-                        printQD
+                        printAction
                     ]
+                )
+            )
+
+            self.nozzleCarriage.runAction(
+                SCNAction.move(
+                    to:
+                        SCNVector3(
+                            target.x,
+                            6.5,
+                            target.z
+                        ),
+                    duration: 0.025
                 )
             )
 
@@ -1158,69 +1557,134 @@ final class QRTLQDJet3DPrintingScene {
         printNextQD()
     }
 
-
-    // MARK: QD Jet Visualization
+    // MARK: - QD JET
 
     private func animateQDJet(
         from start: SCNVector3,
         to target: SCNVector3
     ) {
 
-        let jetGeometry = SCNSphere(
-            radius: 0.035
-        )
+        // -----------------------------------------------------
+        // VISIBLE JET PARTICLE
+        // -----------------------------------------------------
 
-        jetGeometry.firstMaterial?.diffuse.contents =
-            UIColor.systemOrange
-
-        jetGeometry.firstMaterial?.emission.contents =
-            UIColor.systemOrange
-
-        let jetParticle =
-            SCNNode(
-                geometry: jetGeometry
+        let geometry =
+            SCNSphere(
+                radius: 0.045
             )
 
-        jetParticle.position =
+        geometry.firstMaterial?.diffuse.contents =
+            UIColor.systemOrange
+
+        geometry.firstMaterial?.emission.contents =
+            UIColor.systemOrange
+
+        let jet =
+            SCNNode(
+                geometry: geometry
+            )
+
+        jet.position =
             start
 
         printerRoot.addChildNode(
-            jetParticle
+            jet
         )
 
         let move =
             SCNAction.move(
                 to: target,
-                duration: 0.10
+                duration: 0.08
             )
 
-        let fade =
-            SCNAction.fadeOut(
-                duration: 0.05
+        let scale =
+            SCNAction.sequence(
+                [
+                    SCNAction.scale(
+                        to: 1.5,
+                        duration: 0.04
+                    ),
+
+                    SCNAction.scale(
+                        to: 0.5,
+                        duration: 0.04
+                    )
+                ]
             )
 
         let remove =
             SCNAction.removeFromParentNode()
 
-        jetParticle.runAction(
-            SCNAction.sequence(
+        jet.runAction(
+            SCNAction.group(
                 [
                     move,
-                    fade,
+                    scale
+                ]
+            )
+        )
+
+        jet.runAction(
+            SCNAction.sequence(
+                [
+                    SCNAction.wait(
+                        duration: 0.09
+                    ),
                     remove
                 ]
             )
         )
     }
 
+    // MARK: - COMPLETE CUBE
 
-    // MARK: Robotic Wire Placement
+    private func finishLattice() {
+
+        state?.manufacturingState =
+            "3D QD LATTICE COMPLETED"
+
+        // Make complete cube outline visible.
+
+        latticeCube?.runAction(
+            SCNAction.fadeIn(
+                duration: 0.8
+            )
+        )
+
+        // Give the completed cube a subtle pulse.
+
+        let pulse =
+            SCNAction.sequence(
+                [
+                    SCNAction.fadeOpacity(
+                        to: 0.35,
+                        duration: 0.5
+                    ),
+
+                    SCNAction.fadeOpacity(
+                        to: 0.75,
+                        duration: 0.5
+                    )
+                ]
+            )
+
+        latticeCube?.runAction(
+            SCNAction.repeat(
+                pulse,
+                count: 2
+            )
+        )
+    }
+
+    // MARK: - ROBOTIC ACCESS WIRES
 
     private func animateRoboticWirePlacement(
         generation: Int
     ) {
 
-        guard generation == animationGeneration else {
+        guard generation ==
+                animationGeneration
+        else {
             return
         }
 
@@ -1233,49 +1697,108 @@ final class QRTLQDJet3DPrintingScene {
         )
     }
 
-
     private func placeWire(
         index: Int,
         generation: Int
     ) {
 
-        guard generation == animationGeneration else {
+        guard generation ==
+                animationGeneration
+        else {
             return
         }
 
-        guard index < parameters.wireCount else {
+        guard index <
+                parameters.wireCount
+        else {
 
             state?.manufacturingState =
-                "3D MEMORY READY"
+                "ACCESS WIRES REGISTERED"
 
-            animateDataTransfer(
-                generation: generation
-            )
+            DispatchQueue.main.asyncAfter(
+                deadline:
+                    .now() + 0.8
+            ) {
+
+                self.animateDataTransfer(
+                    generation: generation
+                )
+            }
 
             return
         }
+
+        // -----------------------------------------------------
+        // SELECT LATTICE COLUMN
+        // -----------------------------------------------------
+
+        let column =
+            index %
+            parameters.columns
+
+        let row =
+            (index /
+             parameters.columns)
+            %
+            parameters.rows
+
+        let startX =
+            -Float(parameters.columns - 1)
+            *
+            parameters.latticeSpacing
+            *
+            0.5
+
+        let startZ =
+            -Float(parameters.rows - 1)
+            *
+            parameters.latticeSpacing
+            *
+            0.5
+
+        let targetX =
+            startX +
+            Float(column)
+            *
+            parameters.latticeSpacing
+
+        let targetZ =
+            startZ +
+            Float(row)
+            *
+            parameters.latticeSpacing
+
+        // -----------------------------------------------------
+        // CREATE WIRE ABOVE ROBOT
+        // -----------------------------------------------------
 
         let wire =
             createAccessWire(
-                index: index
+                index: index,
+                x: targetX,
+                z: targetZ
             )
 
-        let x =
-            -3.5 +
-            Float(index % parameters.columns)
-            * 0.7
+        let cubeHeight =
+            Float(parameters.layers)
+            *
+            parameters.latticeSpacing
 
-        let z =
-            -2.5 +
-            Float(index / parameters.columns)
-            * 0.8
+        let wireTopY =
+            0.75 +
+            cubeHeight +
+            0.45
 
-        // Robot starts above the lattice.
+        let wireBottomY =
+            0.75 +
+            cubeHeight / 2.0
+
+        // Start at robot.
 
         wire.position =
             SCNVector3(
                 7,
-                6.0,
+                wireTopY + 3,
                 0
             )
 
@@ -1289,85 +1812,156 @@ final class QRTLQDJet3DPrintingScene {
             wire
         )
 
+        // -----------------------------------------------------
+        // ROBOT MOVEMENT
+        // -----------------------------------------------------
+
+        let moveRobotToPickup =
+            SCNAction.move(
+                to:
+                    SCNVector3(
+                        7,
+                        wireTopY + 2.5,
+                        0
+                    ),
+                duration: 0.30
+            )
+
+        let moveToLattice =
+            SCNAction.move(
+                to:
+                    SCNVector3(
+                        targetX,
+                        wireTopY,
+                        targetZ
+                    ),
+                duration: 0.45
+            )
+
+        let descendWire =
+            SCNAction.move(
+                to:
+                    SCNVector3(
+                        targetX,
+                        wireBottomY,
+                        targetZ
+                    ),
+                duration: 0.65
+            )
+
+        // -----------------------------------------------------
+        // WIRE APPROACH
+        // -----------------------------------------------------
+
         let approach =
             SCNAction.group(
                 [
                     SCNAction.move(
-                        to: SCNVector3(
-                            x,
-                            5.0,
-                            z
-                        ),
+                        to:
+                            SCNVector3(
+                                targetX,
+                                wireTopY,
+                                targetZ
+                            ),
                         duration: 0.45
                     ),
 
                     SCNAction.fadeIn(
-                        duration: 0.25
+                        duration: 0.2
                     )
                 ]
             )
 
-        let descend =
-            SCNAction.move(
-                to: SCNVector3(
-                    x,
-                    2.5,
-                    z
-                ),
-                duration: 0.45
-            )
-
-        let lock =
-            SCNAction.run { _ in
-
-                self.state?.update(
-                    layer:
-                        self.parameters.layers,
-                    deposited:
-                        self.qdNodes.count,
-                    total:
-                        self.qdNodes.count,
-                    wires:
-                        index + 1,
-                    totalWires:
-                        self.parameters.wireCount,
-                    state:
-                        "WIRE \(index + 1) REGISTERED",
-                    rateModel:
-                        QRTLDataRateModel(
-                            parameters:
-                                self.parameters
-                        )
-                )
-            }
-
         wire.runAction(
             SCNAction.sequence(
                 [
-                    approach,
-                    descend,
-                    lock
+                    SCNAction.move(
+                        to:
+                            SCNVector3(
+                                targetX,
+                                wireTopY,
+                                targetZ
+                            ),
+                        duration: 0.45
+                    ),
+
+                    descendWire,
+
+                    SCNAction.run { _ in
+
+                        self.state?.update(
+                            layer:
+                                self.parameters.layers,
+                            deposited:
+                                self.qdNodes.count,
+                            total:
+                                self.qdNodes.count,
+                            wires:
+                                index + 1,
+                            totalWires:
+                                self.parameters.wireCount,
+                            state:
+                                "WIRE \(index + 1) REGISTERED",
+                            rateModel:
+                                QRTLDataRateModel(
+                                    parameters:
+                                        self.parameters
+                                )
+                        )
+                    }
                 ]
             )
         )
 
-        // Animate robot gripper following wire.
+        // -----------------------------------------------------
+        // GRIPPER TRACKS THE WIRE
+        // -----------------------------------------------------
 
         robotGripper.runAction(
-            SCNAction.move(
-                to: SCNVector3(
-                    x,
-                    3.5,
-                    z
-                ),
-                duration: 0.8
+            SCNAction.sequence(
+                [
+                    moveRobotToPickup,
+
+                    moveToLattice,
+
+                    SCNAction.move(
+                        to:
+                            SCNVector3(
+                                targetX,
+                                wireBottomY + 0.5,
+                                targetZ
+                            ),
+                        duration: 0.65
+                    )
+                ]
             )
         )
+
+        // -----------------------------------------------------
+        // ARM VISUAL MOVEMENT
+        // -----------------------------------------------------
+
+        robotForearm.runAction(
+            SCNAction.move(
+                to:
+                    SCNVector3(
+                        targetX,
+                        4.8,
+                        targetZ
+                    ),
+                duration: 1.4
+            )
+        )
+
+        // -----------------------------------------------------
+        // NEXT WIRE
+        // -----------------------------------------------------
 
         DispatchQueue.main.asyncAfter(
             deadline:
                 .now() +
                 parameters.wireAnimationDuration
+                + 0.55
         ) {
 
             self.placeWire(
@@ -1377,14 +1971,15 @@ final class QRTLQDJet3DPrintingScene {
         }
     }
 
-
-    // MARK: Data Transfer
+    // MARK: - DATA TRANSFER
 
     private func animateDataTransfer(
         generation: Int
     ) {
 
-        guard generation == animationGeneration else {
+        guard generation ==
+                animationGeneration
+        else {
             return
         }
 
@@ -1394,7 +1989,8 @@ final class QRTLQDJet3DPrintingScene {
         createWriteParticles()
 
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + 2.0
+            deadline:
+                .now() + 1.5
         ) {
 
             guard generation ==
@@ -1405,30 +2001,46 @@ final class QRTLQDJet3DPrintingScene {
 
             self.createReadParticles()
         }
+
+        DispatchQueue.main.asyncAfter(
+            deadline:
+                .now() + 3.0
+        ) {
+
+            guard generation ==
+                    self.animationGeneration
+            else {
+                return
+            }
+
+            self.state?.manufacturingState =
+                "3D MEMORY ONLINE"
+        }
     }
 
-
-    // MARK: Write Data Flow
+    // MARK: - WRITE DATA
 
     private func createWriteParticles() {
 
-        for i in 0..<12 {
+        let count =
+            parameters.dataParticleCount
 
-            let particleGeometry =
+        for i in 0..<count {
+
+            let geometry =
                 SCNSphere(
-                    radius: 0.06
+                    radius: 0.075
                 )
 
-            particleGeometry.firstMaterial?.diffuse.contents =
+            geometry.firstMaterial?.diffuse.contents =
                 UIColor.systemGreen
 
-            particleGeometry.firstMaterial?.emission.contents =
+            geometry.firstMaterial?.emission.contents =
                 UIColor.systemGreen
 
             let particle =
                 SCNNode(
-                    geometry:
-                        particleGeometry
+                    geometry: geometry
                 )
 
             particle.position =
@@ -1448,56 +2060,87 @@ final class QRTLQDJet3DPrintingScene {
 
             let target =
                 qdNodes[
-                    i % qdNodes.count
+                    i %
+                    qdNodes.count
                 ].position
 
-            let path =
+            let move =
                 SCNAction.move(
                     to: target,
-                    duration: 1.0
+                    duration: 0.9
                 )
 
-            let remove =
-                SCNAction.removeFromParentNode()
+            let pulse =
+                SCNAction.sequence(
+                    [
+                        SCNAction.scale(
+                            to: 1.4,
+                            duration: 0.12
+                        ),
+
+                        SCNAction.scale(
+                            to: 1.0,
+                            duration: 0.12
+                        )
+                    ]
+                )
+
+            particle.runAction(
+                SCNAction.group(
+                    [
+                        move,
+                        pulse
+                    ]
+                )
+            )
 
             particle.runAction(
                 SCNAction.sequence(
                     [
-                        path,
-                        remove
+                        SCNAction.wait(
+                            duration: 1.0
+                        ),
+
+                        SCNAction.fadeOut(
+                            duration: 0.15
+                        ),
+
+                        SCNAction.removeFromParentNode()
                     ]
                 )
             )
         }
     }
 
-
-    // MARK: Read Data Flow
+    // MARK: - READ DATA
 
     private func createReadParticles() {
 
-        for i in 0..<12 {
+        let count =
+            parameters.dataParticleCount
 
-            let particleGeometry =
+        for i in 0..<count {
+
+            let geometry =
                 SCNSphere(
-                    radius: 0.06
+                    radius: 0.075
                 )
 
-            particleGeometry.firstMaterial?.diffuse.contents =
+            geometry.firstMaterial?.diffuse.contents =
                 UIColor.systemCyan
 
-            particleGeometry.firstMaterial?.emission.contents =
+            geometry.firstMaterial?.emission.contents =
                 UIColor.systemCyan
 
             let particle =
                 SCNNode(
-                    geometry:
-                        particleGeometry
+                    geometry: geometry
                 )
 
             let source =
                 qdNodes[
-                    i % qdNodes.count
+                    i %
+                    qdNodes.count
                 ].position
 
             particle.position =
@@ -1521,9 +2164,14 @@ final class QRTLQDJet3DPrintingScene {
             particle.runAction(
                 SCNAction.sequence(
                     [
+
                         SCNAction.move(
                             to: target,
                             duration: 1.0
+                        ),
+
+                        SCNAction.fadeOut(
+                            duration: 0.15
                         ),
 
                         SCNAction.removeFromParentNode()
@@ -1533,8 +2181,7 @@ final class QRTLQDJet3DPrintingScene {
         }
     }
 
-
-    // MARK: Utility
+    // MARK: - UTILITY
 
     private func makeCylinder(
         radius: CGFloat,
@@ -1557,12 +2204,13 @@ final class QRTLQDJet3DPrintingScene {
     }
 }
 
-
-// MARK: - SCNVector3 Look-At Helper
+// MARK: - SCNNode LOOK AT
 
 private extension SCNNode {
 
-    func lookAt(_ target: SCNVector3) {
+    func lookAt(
+        _ target: SCNVector3
+    ) {
 
         let dx =
             target.x - position.x
@@ -1593,34 +2241,38 @@ private extension SCNNode {
     }
 }
 
+// MARK: - SWIFTUI SCENE VIEW
 
-// MARK: - SwiftUI Scene View
-
-struct QRTLQDJet3DPrintingView: UIViewRepresentable {
+struct QRTLQDJet3DPrintingView:
+    UIViewRepresentable {
 
     @ObservedObject
-    var state: QRTLManufacturingState
+    var state:
+        QRTLManufacturingState
 
-    let parameters: QRTLMemoryParameters
+    let parameters:
+        QRTLMemoryParameters
 
     func makeUIView(
         context: Context
     ) -> SCNView {
 
-        let sceneBuilder =
+        let builder =
             QRTLQDJet3DPrintingScene(
-                parameters: parameters,
-                state: state
+                parameters:
+                    parameters,
+                state:
+                    state
             )
 
-        context.coordinator.sceneBuilder =
-            sceneBuilder
+        context.coordinator.builder =
+            builder
 
         let view =
             SCNView()
 
         view.scene =
-            sceneBuilder.scene
+            builder.scene
 
         view.allowsCameraControl =
             true
@@ -1634,7 +2286,7 @@ struct QRTLQDJet3DPrintingView: UIViewRepresentable {
         view.showsStatistics =
             false
 
-        sceneBuilder.startManufacturing()
+        builder.startManufacturing()
 
         return view
     }
@@ -1653,15 +2305,15 @@ struct QRTLQDJet3DPrintingView: UIViewRepresentable {
 
     final class Coordinator {
 
-        var sceneBuilder:
+        var builder:
             QRTLQDJet3DPrintingScene?
     }
 }
 
+// MARK: - CONTENT VIEW
 
-// MARK: - Main Content View
-
-struct ContentView: View {
+struct ContentView:
+    View {
 
     @StateObject
     private var state =
@@ -1676,6 +2328,10 @@ struct ContentView: View {
             spacing: 0
         ) {
 
+            // -------------------------------------------------
+            // 3D MANUFACTURING SCENE
+            // -------------------------------------------------
+
             QRTLQDJet3DPrintingView(
                 state: state,
                 parameters: parameters
@@ -1684,6 +2340,10 @@ struct ContentView: View {
                 maxWidth: .infinity,
                 maxHeight: .infinity
             )
+
+            // -------------------------------------------------
+            // MANUFACTURING MONITOR
+            // -------------------------------------------------
 
             ScrollView {
 
@@ -1708,15 +2368,19 @@ struct ContentView: View {
 
                     Divider()
 
+                    // -------------------------------------------------
+                    // 3D PRINTING
+                    // -------------------------------------------------
+
                     Text(
-                        "QD PRINTING"
+                        "3D QD PRINTING"
                     )
                     .font(
                         .headline
                     )
 
                     Text(
-                        "Layer: \(state.currentLayer)"
+                        "Layer: \(state.currentLayer) / \(parameters.layers)"
                     )
 
                     Text(
@@ -1728,6 +2392,10 @@ struct ContentView: View {
                     )
 
                     Divider()
+
+                    // -------------------------------------------------
+                    // ROBOTIC WIRES
+                    // -------------------------------------------------
 
                     Text(
                         "ROBOTIC ACCESS WIRES"
@@ -1742,6 +2410,10 @@ struct ContentView: View {
 
                     Divider()
 
+                    // -------------------------------------------------
+                    // MEMORY DATA PATH
+                    // -------------------------------------------------
+
                     Text(
                         "MEMORY DATA TRANSFER"
                     )
@@ -1750,11 +2422,11 @@ struct ContentView: View {
                     )
 
                     Text(
-                        "WRITE: \(state.writeRate)"
+                        "WRITE / INPUT: \(state.writeRate)"
                     )
 
                     Text(
-                        "READ: \(state.readRate)"
+                        "READ / OUTPUT: \(state.readRate)"
                     )
 
                     Text(
@@ -1767,8 +2439,12 @@ struct ContentView: View {
 
                     Divider()
 
+                    // -------------------------------------------------
+                    // STORAGE
+                    // -------------------------------------------------
+
                     Text(
-                        "TOTAL STORAGE"
+                        "3D MEMORY CAPACITY"
                     )
                     .font(
                         .headline
@@ -1778,7 +2454,15 @@ struct ContentView: View {
                         state.storageCapacity
                     )
 
+                    Text(
+                        "\(parameters.columns) × \(parameters.rows) × \(parameters.layers) QD sites"
+                    )
+
                     Divider()
+
+                    // -------------------------------------------------
+                    // EQUATIONS
+                    // -------------------------------------------------
 
                     Text(
                         "DATA-RATE EQUATIONS"
@@ -1788,27 +2472,27 @@ struct ContentView: View {
                     )
 
                     Text(
-                        "Rᵢₙ = Nw × fw × BQD × Uw × ηw"
-                    )
-                    .font(
-                        .system(
-                            .body,
-                            design: .monospaced
-                        )
-                    )
-
-                    Text(
-                        "Rₒᵤₜ = Nr × fr × BQD × Ur × ηr"
-                    )
-                    .font(
-                        .system(
-                            .body,
-                            design: .monospaced
-                        )
-                    )
-
-                    Text(
                         "C = NQD × BQD"
+                    )
+                    .font(
+                        .system(
+                            .body,
+                            design: .monospaced
+                        )
+                    )
+
+                    Text(
+                        "RIN = Nw × fw × BQD × Uw × ηw"
+                    )
+                    .font(
+                        .system(
+                            .body,
+                            design: .monospaced
+                        )
+                    )
+
+                    Text(
+                        "ROUT = Nr × fr × BQD × Ur × ηr"
                     )
                     .font(
                         .system(
@@ -1827,8 +2511,17 @@ struct ContentView: View {
                         )
                     )
 
+                    Divider()
+
                     Text(
-                        "These rates are simulation parameters, not experimentally established QD-memory performance."
+                        "MODEL NOTE"
+                    )
+                    .font(
+                        .headline
+                    )
+
+                    Text(
+                        "The QD jet, 3D lattice construction, robotic wire placement, and data particles are visualization models. The displayed memory bandwidth and capacity are configurable engineering simulation targets, not experimentally established QD-memory performance."
                     )
                     .font(
                         .caption
@@ -1840,17 +2533,14 @@ struct ContentView: View {
                 .padding()
             }
             .frame(
-                maxHeight: 330
+                maxHeight: 350
             )
         }
     }
 }
 
-
-// MARK: - Preview
+// MARK: - PREVIEW
 
 #Preview {
-
     ContentView()
 }
-

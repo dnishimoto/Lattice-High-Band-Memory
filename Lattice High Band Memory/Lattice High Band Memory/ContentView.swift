@@ -1,4 +1,20 @@
 /*
+ Think of your 3D memory as a gigantic **multi-story library**.
+
+ The entire memory system is the library building. Each physical memory layer is one floor of the building. Each floor contains rows of shelves, and each shelf contains many numbered boxes. Instead of an address pointing to one individual letter printed on a page, it points to one specific box that contains a whole bundle of information.
+
+ For example, imagine the library has 64-page packets stored in every box. A memory address such as `Layer 12 : Row 37 : Column 18` is like telling a robot librarian: “Go to floor 12, find aisle 37, then select box 18.” That location identifies one particular memory block. Inside that box are 64 separate pages, analogous to the 64 individual bits in a memory word. Each page can contain either a `0` or a `1`.
+
+ The address wires are like the instructions sent from the librarian’s control desk to the robot. They do not need to connect directly to every page in every box in the building. Instead, they provide a location code. The robot interprets the code through an address decoder, which is like a detailed navigation system: it figures out the correct floor, the correct aisle, and the correct box.
+
+ The data wires are like a shared conveyor belt that runs through the library. Every box has a possible connection to the conveyor belt, but the box remains closed and disconnected unless the robot has selected it. When the address selects the box at Layer 12, Row 37, Column 18, that box opens and places its 64 pages on the conveyor belt. The belt carries all 64 page values back to the control desk at the same time.
+
+ For a write operation, the process runs in reverse. The control desk places 64 new pages onto the shared conveyor belt and sends the location code for the target box. The address decoder directs the robot to the specified floor, row, and column, opens only that one box, and replaces the 64 pages inside it. Every other box stays closed, so no other stored information is changed.
+
+ In this analogy, one QRTL memory cell is like a single page containing one mark: either `0` or `1`. A 64-bit word is like a packet of 64 pages stored together in one numbered box. A memory address is the box’s complete location label, not a label for every individual page. The decoder is the navigation system that finds the box, and the data bus is the shared conveyor belt used to carry the selected packet to or from the controller.
+
+ So the important point is: the system does not need a separate private hallway from the control desk to every page in the entire library. It only needs a way to identify one box and temporarily connect that box to the shared conveyor belt.
+ 
  The cleanest way to think about a 3D memory system is that a memory address normally selects a **word** or block of bits rather than one physical wire corresponding to one individual bit. For example, suppose the memory has 1,024 addressable locations and each location stores a 64-bit word. Address `0000` selects one group of 64 bits, address `0001` selects another group of 64 bits, and so on through address `1023`. If address `0372` is selected, the memory returns or updates the 64 stored values in that particular word, such as `b63, b62, b61 ... b2, b1, b0`. In this arrangement, an address identifies the location of a multi-bit data block, not the position of a single isolated bit.
 
  The address wires form an address bus, such as `A0, A1, A2 ... An`, which carries a binary address into an address decoder. The decoder converts that binary number into a one-of-many selection signal. For instance, when the controller sends address `0372`, the decoder activates only the select line for word `0372`. All other words remain electrically disconnected from the current read or write operation. This lets a relatively small set of address wires choose among a very large number of memory blocks.

@@ -1165,13 +1165,23 @@ extension QRTLManufacturingState {
         return String(repeating: "0", count: max(0, 32 - bits.count)) + bits
     }
 }
-
+private struct LatticeAddress {
+    let layer: Int
+    let shelf: Int
+    let box: Int
+}
 // MARK: - QRTL SCENE
 
 @MainActor
 
 final class QRTLQDJet3DPrintingScene {
 
+    private var selectedLayerNode: SCNNode?
+    private var selectedShelfNode: SCNNode?
+    private var selectedBoxNode: SCNNode?
+    private var selectedAccessWire: SCNNode?
+    private var selectedQDNode: SCNNode?
+    
     private let dataRateModel: QRTLDataRateModel
 
     let scene: SCNScene
@@ -1321,237 +1331,532 @@ final class QRTLQDJet3DPrintingScene {
     private func configureScene() {
 
         // ================================================================
-
-        // Scene
-
+        // SCENE BACKGROUND
         // ================================================================
 
         scene.background.contents = UIColor(
-
             white: 0.008,
-
             alpha: 1.0
-
         )
 
-
-
         // ================================================================
-
-        // Manufacturing root
-
+        // ROOT NODE HIERARCHY
         // ================================================================
 
         scene.rootNode.addChildNode(manufacturingRoot)
 
         manufacturingRoot.addChildNode(printerRoot)
-
         manufacturingRoot.addChildNode(latticeRoot)
-
         manufacturingRoot.addChildNode(robotRoot)
-
         manufacturingRoot.addChildNode(wireRoot)
-
         manufacturingRoot.addChildNode(dataRoot)
 
+        // ================================================================
+        // CAMERA TARGET
+        //
+        // The target is between the lattice center and printer nozzle.
+        //
+        // Lattice: approximately y = 0.75 to y = 5.75
+        // Nozzle: y = 5.9
+        // Carriage: y = 6.5
+        // Gantry: y = 7.0
+        // ================================================================
 
+        let cameraTargetNode = SCNNode()
+
+        cameraTargetNode.name = "CAMERA_TARGET"
+
+        cameraTargetNode.position = SCNVector3(
+            -0.5,
+            3.75,
+            0.0
+        )
+
+        scene.rootNode.addChildNode(cameraTargetNode)
 
         // ================================================================
-        // Camera
+        // CAMERA
         // ================================================================
 
         let cameraNode = SCNNode()
         let camera = SCNCamera()
 
-        camera.fieldOfView = 50.0
+        camera.fieldOfView = 55.0
         camera.zNear = 0.1
         camera.zFar = 200.0
 
         cameraNode.camera = camera
 
-        // ---------------------------------------------------------------
-        // Frame the camera around the actual scene geometry instead of a
-        // fixed hand-tuned offset, so it zooms in tightly on the lattice
-        // (and stays correctly framed if columns/rows/layers/spacing
-        // ever change) rather than sitting far back with the lattice
-        // occupying only a small part of the frame.
-        //
-        // The scene the camera must fit spans:
-        //   - the QD lattice footprint: columns x rows x latticeSpacing
-        //   - vertically, from the base of the lattice (y = 0.75, set
-        //     in buildLattice()) up to the nozzle carriage height
-        //     (y = 6.5, set in the printer setup above), so the
-        //     nozzle stays in frame together with the growing cube.
-        // ---------------------------------------------------------------
-
-        let latticeHalfWidth =
-            Float(parameters.columns - 1) * parameters.latticeSpacing * 0.5
-        let latticeHalfDepth =
-            Float(parameters.rows - 1) * parameters.latticeSpacing * 0.5
-
-        let sceneBottomY: Float = 0.75
-        let sceneTopY: Float = 6.5
-        let sceneCenterY = (sceneBottomY + sceneTopY) * 0.5
-        let sceneHalfHeight = (sceneTopY - sceneBottomY) * 0.5
-
-        // Point the camera at the true center of that volume.
-        let cameraTarget = SCNVector3(0.0, sceneCenterY, 0.0)
-
-        // Half-diagonal of the scene's bounding box, padded slightly so
-        // the outermost QD spheres and the nozzle aren't clipped at the
-        // edge of the frame.
-        let sceneBoundingRadius =
-            sqrt(
-                latticeHalfWidth * latticeHalfWidth +
-                latticeHalfDepth * latticeHalfDepth +
-                sceneHalfHeight * sceneHalfHeight
-            ) + Float(parameters.qdRadius)
-
-        // Distance needed to fit a sphere of sceneBoundingRadius inside
-        // the camera's field of view, with a small framing margin.
-        let halfFieldOfViewRadians =
-            Float(camera.fieldOfView) * 0.5 * Float.pi / 180.0
-
-        let framingPadding: Float = 1.1
-
-        let cameraDistance =
-            (sceneBoundingRadius / sin(halfFieldOfViewRadians)) *
-            framingPadding
-
-        // Keep the same cinematic viewing angle as before (slightly to
-        // the side, slightly above, looking back toward the lattice),
-        // just placed at the distance that actually zooms in on it.
-        let viewDirectionRaw = SCNVector3(0.6, 0.35, 0.8)
-        let viewDirectionLength = sqrt(
-            viewDirectionRaw.x * viewDirectionRaw.x +
-            viewDirectionRaw.y * viewDirectionRaw.y +
-            viewDirectionRaw.z * viewDirectionRaw.z
-        )
-        let viewDirection = SCNVector3(
-            viewDirectionRaw.x / viewDirectionLength,
-            viewDirectionRaw.y / viewDirectionLength,
-            viewDirectionRaw.z / viewDirectionLength
-        )
-
+        // Explicit starting position.
+        // The positive Z position looks toward the model centered near Z = 0.
         cameraNode.position = SCNVector3(
-            cameraTarget.x + viewDirection.x * cameraDistance,
-            cameraTarget.y + viewDirection.y * cameraDistance,
-            cameraTarget.z + viewDirection.z * cameraDistance
+            13.0,
+            9.5,
+            18.0
         )
 
-        // Point camera directly at the lattice/nozzle volume.
-        cameraNode.lookAt(cameraTarget)
+        let lookAtConstraint = SCNLookAtConstraint(
+            target: cameraTargetNode
+        )
+
+        lookAtConstraint.isGimbalLockEnabled = true
+
+        cameraNode.constraints = [
+            lookAtConstraint
+        ]
 
         scene.rootNode.addChildNode(cameraNode)
 
-
-
         // ================================================================
-
-        // Lighting
-
+        // AMBIENT LIGHT
         // ================================================================
-
-        // Ambient light
 
         let ambientNode = SCNNode()
-
         let ambientLight = SCNLight()
 
         ambientLight.type = .ambient
-
-        ambientLight.intensity = 650.0
-
+        ambientLight.intensity = 700.0
         ambientLight.color = UIColor(
-
-            white: 0.75,
-
+            white: 0.82,
             alpha: 1.0
-
         )
 
         ambientNode.light = ambientLight
 
         scene.rootNode.addChildNode(ambientNode)
 
-
-
-        // Key light
+        // ================================================================
+        // KEY LIGHT
+        // ================================================================
 
         let keyLightNode = SCNNode()
-
         let keyLight = SCNLight()
 
         keyLight.type = .omni
-
-        keyLight.intensity = 1400.0
-
-        keyLight.color = UIColor(
-
-            white: 1.0,
-
-            alpha: 1.0
-
-        )
-
+        keyLight.intensity = 1600.0
+        keyLight.color = UIColor.white
         keyLight.attenuationStartDistance = 5.0
-
-        keyLight.attenuationEndDistance = 50.0
+        keyLight.attenuationEndDistance = 60.0
 
         keyLightNode.light = keyLight
 
         keyLightNode.position = SCNVector3(
-
             8.0,
-
             13.0,
-
             10.0
-
         )
 
         scene.rootNode.addChildNode(keyLightNode)
 
-
-
-        // Fill light
+        // ================================================================
+        // FILL LIGHT
+        // ================================================================
 
         let fillLightNode = SCNNode()
-
         let fillLight = SCNLight()
 
         fillLight.type = .omni
-
-        fillLight.intensity = 900.0
-
+        fillLight.intensity = 1100.0
         fillLight.color = UIColor(
-
-            white: 0.85,
-
+            red: 0.72,
+            green: 0.82,
+            blue: 1.0,
             alpha: 1.0
-
         )
 
         fillLight.attenuationStartDistance = 5.0
-
-        fillLight.attenuationEndDistance = 45.0
+        fillLight.attenuationEndDistance = 60.0
 
         fillLightNode.light = fillLight
 
         fillLightNode.position = SCNVector3(
-
             -10.0,
-
-            8.0,
-
+            9.0,
             -8.0
-
         )
 
         scene.rootNode.addChildNode(fillLightNode)
 
+        // ================================================================
+        // FRONT LIGHT
+        //
+        // Prevents the lattice from becoming too dark when the camera is
+        // viewing from positive X / positive Z.
+        // ================================================================
+
+        let frontLightNode = SCNNode()
+        let frontLight = SCNLight()
+
+        frontLight.type = .omni
+        frontLight.intensity = 900.0
+        frontLight.color = UIColor(
+            red: 0.75,
+            green: 0.95,
+            blue: 1.0,
+            alpha: 1.0
+        )
+
+        frontLight.attenuationStartDistance = 3.0
+        frontLight.attenuationEndDistance = 45.0
+
+        frontLightNode.light = frontLight
+
+        frontLightNode.position = SCNVector3(
+            10.0,
+            5.0,
+            15.0
+        )
+
+        scene.rootNode.addChildNode(frontLightNode)
+    }
+    private func latticeAddressForDemoTransfer() -> LatticeAddress {
+        LatticeAddress(
+            layer: min(3, parameters.layers - 1),
+            shelf: min(4, parameters.rows - 1),
+            box: min(7, parameters.columns - 1)
+        )
     }
 
+    private func qdIndex(
+        layer: Int,
+        shelf: Int,
+        box: Int
+    ) -> Int {
+        layer * parameters.rows * parameters.columns +
+        shelf * parameters.columns +
+        box
+    }
+
+    private func latticePosition(
+        layer: Int,
+        shelf: Int,
+        box: Int
+    ) -> SCNVector3 {
+
+        let startX =
+            -Float(parameters.columns - 1) *
+            parameters.latticeSpacing *
+            0.5
+
+        let startZ =
+            -Float(parameters.rows - 1) *
+            parameters.latticeSpacing *
+            0.5
+
+        let startY: Float = 0.75
+
+        return SCNVector3(
+            startX + Float(box) * parameters.latticeSpacing,
+            startY + Float(layer) * parameters.latticeSpacing,
+            startZ + Float(shelf) * parameters.latticeSpacing
+        )
+    }
+
+    private func clearLatticeAccessSelection() {
+        selectedLayerNode?.removeFromParentNode()
+        selectedShelfNode?.removeFromParentNode()
+        selectedBoxNode?.removeFromParentNode()
+        selectedAccessWire?.removeFromParentNode()
+
+        selectedLayerNode = nil
+        selectedShelfNode = nil
+        selectedBoxNode = nil
+        selectedAccessWire = nil
+
+        selectedQDNode?.removeAllActions()
+
+        if let material = selectedQDNode?.geometry?.firstMaterial {
+            material.diffuse.contents = UIColor.systemTeal
+            material.emission.contents = UIColor.systemTeal
+        }
+
+        selectedQDNode = nil
+    }
+
+    private func makeTransparentMaterial(
+        color: UIColor,
+        alpha: CGFloat,
+        emission: UIColor
+    ) -> SCNMaterial {
+
+        let material = SCNMaterial()
+
+        material.diffuse.contents = color.withAlphaComponent(alpha)
+        material.emission.contents = emission
+        material.isDoubleSided = true
+        material.transparency = alpha
+
+        return material
+    }
+
+    private func animateLatticeAccess(
+        generation: Int,
+        completion: @escaping () -> Void
+    ) {
+        guard generation == animationGeneration else {
+            return
+        }
+
+        guard !qdNodes.isEmpty else {
+            completion()
+            return
+        }
+
+        clearLatticeAccessSelection()
+
+        let address = latticeAddressForDemoTransfer()
+
+        let selectedIndex = qdIndex(
+            layer: address.layer,
+            shelf: address.shelf,
+            box: address.box
+        )
+
+        guard selectedIndex >= 0,
+              selectedIndex < qdNodes.count else {
+            completion()
+            return
+        }
+
+        let selectedPosition = latticePosition(
+            layer: address.layer,
+            shelf: address.shelf,
+            box: address.box
+        )
+
+        let selectedQD = qdNodes[selectedIndex]
+        selectedQDNode = selectedQD
+
+        let cubeWidth =
+            CGFloat(parameters.columns) *
+            CGFloat(parameters.latticeSpacing)
+
+        let cubeDepth =
+            CGFloat(parameters.rows) *
+            CGFloat(parameters.latticeSpacing)
+
+        let cubeHeight =
+            CGFloat(parameters.layers) *
+            CGFloat(parameters.latticeSpacing)
+
+        let latticeBaseY: Float = 0.75
+
+        let layerY =
+            latticeBaseY +
+            Float(address.layer) * parameters.latticeSpacing
+
+        // -------------------------------------------------------------
+        // STEP 1: LAYER SELECT
+        // The horizontal glowing plane represents choosing one floor.
+        // -------------------------------------------------------------
+
+        let layerGeometry = SCNBox(
+            width: cubeWidth + 0.18,
+            height: 0.12,
+            length: cubeDepth + 0.18,
+            chamferRadius: 0.04
+        )
+
+        layerGeometry.materials = [
+            makeTransparentMaterial(
+                color: UIColor.systemPurple,
+                alpha: 0.26,
+                emission: UIColor.systemPurple
+            )
+        ]
+
+        let layerNode = SCNNode(geometry: layerGeometry)
+        layerNode.name = "SELECTED_LAYER_\(address.layer)"
+        layerNode.position = SCNVector3(0, layerY, 0)
+        layerNode.opacity = 0
+
+        latticeRoot.addChildNode(layerNode)
+        selectedLayerNode = layerNode
+
+        // -------------------------------------------------------------
+        // STEP 2: SHELF SELECT
+        // A glowing horizontal shelf/row corridor along the X axis.
+        // -------------------------------------------------------------
+
+        let shelfGeometry = SCNBox(
+            width: cubeWidth + 0.24,
+            height: 0.20,
+            length: CGFloat(parameters.latticeSpacing) * 0.42,
+            chamferRadius: 0.04
+        )
+
+        shelfGeometry.materials = [
+            makeTransparentMaterial(
+                color: UIColor.systemOrange,
+                alpha: 0.78,
+                emission: UIColor.systemOrange
+            )
+        ]
+
+        let shelfNode = SCNNode(geometry: shelfGeometry)
+        shelfNode.name = "SELECTED_SHELF_\(address.shelf)"
+        shelfNode.position = SCNVector3(
+            0,
+            selectedPosition.y,
+            selectedPosition.z
+        )
+        shelfNode.opacity = 0
+
+        latticeRoot.addChildNode(shelfNode)
+        selectedShelfNode = shelfNode
+
+        // -------------------------------------------------------------
+        // STEP 3: BOX SELECT
+        // A small highlight cube marks the selected addressable box.
+        // -------------------------------------------------------------
+
+        let boxGeometry = SCNBox(
+            width: CGFloat(parameters.latticeSpacing) * 0.70,
+            height: CGFloat(parameters.latticeSpacing) * 0.70,
+            length: CGFloat(parameters.latticeSpacing) * 0.70,
+            chamferRadius: 0.08
+        )
+
+        let boxMaterial = makeTransparentMaterial(
+            color: UIColor.systemYellow,
+            alpha: 0.90,
+            emission: UIColor.systemYellow
+        )
+
+        boxMaterial.fillMode = .lines
+
+        boxGeometry.materials = [boxMaterial]
+
+        let boxNode = SCNNode(geometry: boxGeometry)
+        boxNode.name = "SELECTED_BOX_\(address.box)"
+        boxNode.position = selectedPosition
+        boxNode.opacity = 0
+
+        latticeRoot.addChildNode(boxNode)
+        selectedBoxNode = boxNode
+
+        // -------------------------------------------------------------
+        // ACCESS WIRE
+        // Represents the lattice wire at the selected shelf/box position.
+        // It spans the stack and is energized only for the selected path.
+        // -------------------------------------------------------------
+
+        let wireGeometry = SCNCylinder(
+            radius: 0.075,
+            height: cubeHeight + 1.10
+        )
+
+        wireGeometry.firstMaterial?.diffuse.contents = UIColor.systemYellow
+        wireGeometry.firstMaterial?.emission.contents = UIColor.systemYellow
+
+        let wireNode = SCNNode(geometry: wireGeometry)
+        wireNode.name = "ACTIVE_ACCESS_WIRE"
+
+        wireNode.position = SCNVector3(
+            selectedPosition.x,
+            latticeBaseY + Float(parameters.layers - 1) *
+            parameters.latticeSpacing * 0.5,
+            selectedPosition.z
+        )
+
+        wireNode.opacity = 0
+
+        wireRoot.addChildNode(wireNode)
+        selectedAccessWire = wireNode
+
+        // -------------------------------------------------------------
+        // SELECTED QD CELL
+        // This is the actual physical storage cell reached by the address.
+        // -------------------------------------------------------------
+
+        selectedQD.removeAllActions()
+
+        if let material = selectedQD.geometry?.firstMaterial {
+            material.diffuse.contents = UIColor.systemGreen
+            material.emission.contents = UIColor.systemGreen
+        }
+
+        selectedQD.runAction(
+            SCNAction.repeatForever(
+                SCNAction.sequence([
+                    SCNAction.scale(to: 1.85, duration: 0.32),
+                    SCNAction.scale(to: 1.20, duration: 0.32)
+                ])
+            ),
+            forKey: "selectedQDCellPulse"
+        )
+
+        state?.status =
+            "ADDRESS DECODE — LAYER \(address.layer), " +
+            "SHELF \(address.shelf), BOX \(address.box)"
+
+        let selectLayer = SCNAction.sequence([
+            SCNAction.fadeIn(duration: 0.35),
+            SCNAction.wait(duration: 0.55)
+        ])
+
+        let selectShelf = SCNAction.sequence([
+            SCNAction.fadeIn(duration: 0.30),
+            SCNAction.wait(duration: 0.55)
+        ])
+
+        let selectBox = SCNAction.sequence([
+            SCNAction.fadeIn(duration: 0.25),
+            SCNAction.wait(duration: 0.50)
+        ])
+
+        let energizeWire = SCNAction.sequence([
+            SCNAction.fadeIn(duration: 0.25),
+            SCNAction.wait(duration: 0.40)
+        ])
+
+        layerNode.runAction(
+            SCNAction.sequence([
+                selectLayer,
+                SCNAction.run { [weak self] _ in
+                    self?.state?.status =
+                        "LAYER \(address.layer) SELECTED — FLOOR ACTIVATED"
+                }
+            ])
+        )
+
+        shelfNode.runAction(
+            SCNAction.sequence([
+                SCNAction.wait(duration: 0.90),
+                selectShelf,
+                SCNAction.run { [weak self] _ in
+                    self?.state?.status =
+                        "SHELF \(address.shelf) SELECTED — ROW ACTIVATED"
+                }
+            ])
+        )
+
+        boxNode.runAction(
+            SCNAction.sequence([
+                SCNAction.wait(duration: 1.80),
+                selectBox,
+                SCNAction.run { [weak self] _ in
+                    self?.state?.status =
+                        "BOX \(address.box) SELECTED — MEMORY WORD CONNECTED"
+                }
+            ])
+        )
+
+        wireNode.runAction(
+            SCNAction.sequence([
+                SCNAction.wait(duration: 2.55),
+                energizeWire,
+                SCNAction.run { [weak self] _ in
+                    self?.state?.status =
+                        "ACCESS WIRE ENABLED — DATA PATH OPEN"
+                },
+                SCNAction.wait(duration: 0.45),
+                SCNAction.run { _ in
+                    completion()
+                }
+            ])
+        )
+    }
     // MARK: - ENVIRONMENT
 
     private func buildEnvironment() {
@@ -4301,75 +4606,53 @@ final class QRTLQDJet3DPrintingScene {
     // MARK: - DATA TRANSFER
 
     private func animateDataTransfer(
-
         generation: Int
-
     ) {
-
-        guard generation ==
-
-                animationGeneration
-
-        else {
-
+        guard generation == animationGeneration else {
             return
-
         }
 
-        state?.status =
+        state?.status = "MEMORY ADDRESS ACCESS SEQUENCE"
 
-            "READ / WRITE DATA TRANSFER"
-
-        createWriteParticles()
-
-        DispatchQueue.main.asyncAfter(
-
-            deadline:
-
-                .now() + 1.5
-
-        ) {
-
-            guard generation ==
-
-                    self.animationGeneration
-
-            else {
-
+        animateLatticeAccess(generation: generation) { [weak self] in
+            guard let self = self else {
                 return
-
             }
 
-            self.createReadParticles()
-
-        }
-
-        DispatchQueue.main.asyncAfter(
-
-            deadline:
-
-                .now() + 3.0
-
-        ) {
-
-            guard generation ==
-
-                    self.animationGeneration
-
-            else {
-
+            guard generation == self.animationGeneration else {
                 return
-
             }
 
             self.state?.status =
+                "WRITE — DATA BUS ENTERING SELECTED LATTICE BOX"
 
-                "3D MEMORY ONLINE"
+            self.createWriteParticles()
 
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 1.5
+            ) {
+                guard generation == self.animationGeneration else {
+                    return
+                }
+
+                self.state?.status =
+                    "READ — SELECTED LATTICE BOX RETURNING DATA"
+
+                self.createReadParticles()
+            }
+
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 3.0
+            ) {
+                guard generation == self.animationGeneration else {
+                    return
+                }
+
+                self.state?.status =
+                    "3D MEMORY ONLINE — LAYER / SHELF / BOX ADDRESSING ACTIVE"
+            }
         }
-
     }
-
     // MARK: - WRITE DATA
 
     private func createWriteParticles() {

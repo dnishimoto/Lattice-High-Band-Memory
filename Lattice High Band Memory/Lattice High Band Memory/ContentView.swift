@@ -72,6 +72,329 @@ import UIKit
 
 import Combine
 
+// MARK: - QRTL SYSTEM INTENT
+
+enum QRTLSystemIntent: String {
+    case visualizationPrototype = "Visualization Prototype"
+    case hbmReplacementArchitecture = "HBM Replacement Architecture"
+}
+
+/// Models the proposed scalable production QRTL architecture,
+/// completely independent from the small SceneKit demo lattice
+/// rendered by QRTLMemoryParameters below. Nothing in this struct
+/// drives SceneKit node counts; it is a pure numerical model used
+/// to reason about and display the 1 PB/s design target.
+struct QRTLArchitectureParameters {
+
+    // ---------------------------------------------------------
+    // DECLARATION OF INTENT
+    // ---------------------------------------------------------
+
+    /// This model represents a proposed scalable architecture,
+    /// not experimentally measured QD device performance.
+    let systemIntent: QRTLSystemIntent = .hbmReplacementArchitecture
+
+    /// Architectural goal: replace or exceed HBM-class memory
+    /// through massively parallel monolithic 3D QD memory tiles.
+    let intendedRole =
+        "Scalable HBM-replacement / near-compute memory architecture"
+
+    /// Target is usable one-direction payload bandwidth per QRTL package.
+    let targetPayloadBytesPerSecond: Double = 1_000_000_000_000_000
+
+    /// Explicit semantics prevent ambiguity in future analysis.
+    let targetDescription =
+        "1 PB/s sustained one-direction payload bandwidth per QRTL package"
+
+    // ---------------------------------------------------------
+    // HIERARCHICAL ARCHITECTURE
+    //
+    // QD cell -> subarray -> bank -> tile -> layer -> cube/package
+    //
+    // Calibrated to land just over the 1 PB/s target using a
+    // compact bank count rather than maximum theoretical parallelism.
+    // ---------------------------------------------------------
+
+    let cubesPerPackage: Int = 1
+    let layersPerCube: Int = 1_000
+
+    let tilesPerLayer: Int = 1_000
+    let banksPerTile: Int = 1
+
+    /// Independent local access lanes per bank.
+    let lanesPerBank: Int = 1
+
+    /// Payload bits moved by every active lane per access event.
+    ///
+    /// Use 1 for a single-bit cell operation, or a wider burst
+    /// width when a lane returns a vector/word from a local bank.
+    let payloadBitsPerLaneAccess: Double = 1.0
+
+    /// Local lane access cadence assumed by the architecture model.
+    /// This is a proposed model parameter, not a measured device rate.
+    let accessFrequencyHz: Double = 10_100_000_000
+
+    // ---------------------------------------------------------
+    // EFFICIENCY / OVERHEAD
+    // ---------------------------------------------------------
+
+    /// Fraction of lanes doing useful work under sustained load.
+    let sustainedUtilization: Double = 0.90
+
+    /// Yield after defects, redundancy, mapping, and manufacturing loss.
+    let physicalYieldEfficiency: Double = 0.95
+
+    /// Payload fraction after ECC, framing, arbitration, and protocol cost.
+    let payloadEfficiency: Double = 0.94
+
+    /// Fraction of theoretical array throughput that reaches compute logic.
+    let fabricDeliveryEfficiency: Double = 0.99
+
+    // ---------------------------------------------------------
+    // CAPACITY MODEL
+    // ---------------------------------------------------------
+
+    /// Total addressable QD cells per bank.
+    let cellsPerBank: Double = 1_000_000_000
+
+    /// Logical bits stored by each QD cell.
+    let bitsPerQDCell: Double = 1.0
+
+    // ---------------------------------------------------------
+    // LATENCY / POWER TARGETS
+    //
+    // Explicitly targets, not experimental claims.
+    // ---------------------------------------------------------
+
+    let targetRandomReadLatencyNanoseconds: Double = 20.0
+    let targetRandomWriteLatencyNanoseconds: Double = 30.0
+
+    /// Full package electrical power target under sustained transfer.
+    let targetPowerWattsAtSustainedBandwidth: Double = 10_000.0
+
+    // ---------------------------------------------------------
+    // DERIVED COUNTS
+    // ---------------------------------------------------------
+
+    var totalTiles: Double {
+        Double(cubesPerPackage * layersPerCube * tilesPerLayer)
+    }
+
+    var totalBanks: Double {
+        totalTiles * Double(banksPerTile)
+    }
+
+    var totalIndependentLanes: Double {
+        totalBanks * Double(lanesPerBank)
+    }
+
+    var totalQDCells: Double {
+        totalBanks * cellsPerBank
+    }
+
+    // ---------------------------------------------------------
+    // BANDWIDTH MODEL
+    // ---------------------------------------------------------
+
+    /// The raw internal array bit rate before all losses/overheads.
+    var rawArrayBitsPerSecond: Double {
+        totalIndependentLanes *
+        accessFrequencyHz *
+        payloadBitsPerLaneAccess
+    }
+
+    /// The factor converting raw internal activity to useful payload.
+    var totalPayloadEfficiency: Double {
+        sustainedUtilization *
+        physicalYieldEfficiency *
+        payloadEfficiency *
+        fabricDeliveryEfficiency
+    }
+
+    /// Sustained payload rate available to the compute-side interface.
+    var sustainedPayloadBitsPerSecond: Double {
+        rawArrayBitsPerSecond * totalPayloadEfficiency
+    }
+
+    var sustainedPayloadBytesPerSecond: Double {
+        sustainedPayloadBitsPerSecond / 8.0
+    }
+
+    /// Ratio to the declared 1 PB/s target.
+    var targetAchievementRatio: Double {
+        guard targetPayloadBytesPerSecond > 0 else { return 0 }
+        return sustainedPayloadBytesPerSecond /
+            targetPayloadBytesPerSecond
+    }
+
+    var meetsOnePBPerSecondTarget: Bool {
+        sustainedPayloadBytesPerSecond >=
+            targetPayloadBytesPerSecond
+    }
+
+    // ---------------------------------------------------------
+    // CAPACITY MODEL
+    // ---------------------------------------------------------
+
+    var logicalStorageBits: Double {
+        totalQDCells * bitsPerQDCell
+    }
+
+    var logicalStorageBytes: Double {
+        logicalStorageBits / 8.0
+    }
+
+    // ---------------------------------------------------------
+    // ENERGY MODEL
+    // ---------------------------------------------------------
+
+    /// System energy per useful payload bit.
+    ///
+    /// Includes the package power budget divided by delivered bits,
+    /// but remains a target until hardware power is measured.
+    var targetEnergyPerPayloadBitJoules: Double {
+        guard sustainedPayloadBitsPerSecond > 0 else { return 0 }
+        return targetPowerWattsAtSustainedBandwidth /
+            sustainedPayloadBitsPerSecond
+    }
+
+    var targetEnergyPerPayloadBitPicojoules: Double {
+        targetEnergyPerPayloadBitJoules * 1_000_000_000_000
+    }
+
+    // ---------------------------------------------------------
+    // HBM REFERENCE COMPARISON
+    //
+    // This is a configurable reference, not an assumption that all
+    // HBM products have the same stack bandwidth.
+    // ---------------------------------------------------------
+
+    let hbmReferenceStackBytesPerSecond: Double =
+        1_200_000_000_000
+
+    var hbmEquivalentStackCount: Double {
+        sustainedPayloadBytesPerSecond /
+            hbmReferenceStackBytesPerSecond
+    }
+
+    // ---------------------------------------------------------
+    // VALIDATION
+    // ---------------------------------------------------------
+
+    var validationWarnings: [String] {
+        var warnings: [String] = []
+
+        if !meetsOnePBPerSecondTarget {
+            warnings.append(
+                "Architecture does not meet the declared 1 PB/s payload target."
+            )
+        }
+
+        if sustainedUtilization <= 0 || sustainedUtilization > 1 {
+            warnings.append("Sustained utilization must be in (0, 1].")
+        }
+
+        if physicalYieldEfficiency <= 0 ||
+            physicalYieldEfficiency > 1 {
+            warnings.append("Physical yield efficiency must be in (0, 1].")
+        }
+
+        if payloadEfficiency <= 0 || payloadEfficiency > 1 {
+            warnings.append("Payload efficiency must be in (0, 1].")
+        }
+
+        if fabricDeliveryEfficiency <= 0 ||
+            fabricDeliveryEfficiency > 1 {
+            warnings.append(
+                "Fabric delivery efficiency must be in (0, 1]."
+            )
+        }
+
+        return warnings
+    }
+}
+
+extension QRTLArchitectureParameters {
+
+    func architectureSummary() -> [String] {
+        [
+            "SYSTEM INTENT: \(systemIntent.rawValue)",
+            "INTENDED ROLE: \(intendedRole)",
+            "TARGET: \(targetDescription)",
+            "TOTAL TILES: \(Self.formatCount(totalTiles))",
+            "TOTAL BANKS: \(Self.formatCount(totalBanks))",
+            "TOTAL INDEPENDENT LANES: \(Self.formatCount(totalIndependentLanes))",
+            "RAW ARRAY RATE: \(Self.formatBitRate(rawArrayBitsPerSecond))",
+            "SUSTAINED PAYLOAD: \(Self.formatByteRate(sustainedPayloadBytesPerSecond))",
+            "TARGET ACHIEVEMENT: \(String(format: "%.3f", targetAchievementRatio))x",
+            "1 PB/s TARGET MET: \(meetsOnePBPerSecondTarget ? "YES" : "NO")",
+            "HBM STACK EQUIVALENT: \(String(format: "%.1f", hbmEquivalentStackCount)) stacks",
+            "TARGET RANDOM READ LATENCY: \(String(format: "%.1f ns", targetRandomReadLatencyNanoseconds))",
+            "TARGET ENERGY: \(String(format: "%.4f pJ/bit", targetEnergyPerPayloadBitPicojoules))"
+        ]
+    }
+
+    static func formatCount(_ value: Double) -> String {
+        if value >= 1_000_000_000_000 {
+            return String(format: "%.3f T", value / 1_000_000_000_000)
+        }
+        if value >= 1_000_000_000 {
+            return String(format: "%.3f B", value / 1_000_000_000)
+        }
+        if value >= 1_000_000 {
+            return String(format: "%.3f M", value / 1_000_000)
+        }
+        if value >= 1_000 {
+            return String(format: "%.3f K", value / 1_000)
+        }
+        return String(format: "%.0f", value)
+    }
+
+    static func formatBitRate(_ bitsPerSecond: Double) -> String {
+        if bitsPerSecond >= 8_000_000_000_000_000 {
+            return String(format: "%.3f Pb/s", bitsPerSecond / 1_000_000_000_000_000)
+        }
+        if bitsPerSecond >= 8_000_000_000_000 {
+            return String(format: "%.3f Tb/s", bitsPerSecond / 1_000_000_000_000)
+        }
+        if bitsPerSecond >= 8_000_000_000 {
+            return String(format: "%.3f Gb/s", bitsPerSecond / 1_000_000_000)
+        }
+        return String(format: "%.3f b/s", bitsPerSecond)
+    }
+
+    static func formatByteRate(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_000_000_000_000_000 {
+            return String(format: "%.3f PB/s", bytesPerSecond / 1_000_000_000_000_000)
+        }
+        if bytesPerSecond >= 1_000_000_000_000 {
+            return String(format: "%.3f TB/s", bytesPerSecond / 1_000_000_000_000)
+        }
+        if bytesPerSecond >= 1_000_000_000 {
+            return String(format: "%.3f GB/s", bytesPerSecond / 1_000_000_000)
+        }
+        return String(format: "%.3f B/s", bytesPerSecond)
+    }
+}
+
+// IMPORTANT ARCHITECTURE DECLARATION:
+//
+// QRTL is proposed as a scalable monolithic 3D quantum-dot memory
+// architecture intended to replace or exceed HBM-class memory.
+//
+// The SceneKit lattice dimensions, wire count, 100 kHz access values,
+// data particles, and DWORD test below are DEMO / VISUALIZATION SCALE
+// parameters only. They are not the intended production architecture.
+//
+// Production target:
+// - Role: HBM replacement / near-compute memory
+// - Aggregate sustained payload bandwidth: 1 PB/s per QRTL package
+// - Scaling method: massively parallel QD cells -> banks -> tiles ->
+//   layers -> monolithic 3D cube/package
+//
+// All hardware performance, energy, reliability, yield, latency, and
+// cost values are proposed design targets until experimentally verified.
+
 // MARK: - QD MEMORY PARAMETERS
 
 struct QRTLMemoryParameters {
@@ -316,108 +639,42 @@ struct QRTLDataRateModel {
 
     // ---------------------------------------------------------
 
-    static func formatRate(
-
-        _ bitsPerSecond: Double
-
-    ) -> String {
-
+    static func formatRate(_ bitsPerSecond: Double) -> String {
+        if bitsPerSecond >= 1_000_000_000_000_000 {
+            return String(format: "%.3f Pb/s", bitsPerSecond / 1_000_000_000_000_000)
+        }
+        if bitsPerSecond >= 1_000_000_000_000 {
+            return String(format: "%.3f Tb/s", bitsPerSecond / 1_000_000_000_000)
+        }
         if bitsPerSecond >= 1_000_000_000 {
-
-            return String(
-
-                format: "%.2f Gb/s",
-
-                bitsPerSecond / 1_000_000_000
-
-            )
-
+            return String(format: "%.3f Gb/s", bitsPerSecond / 1_000_000_000)
         }
-
         if bitsPerSecond >= 1_000_000 {
-
-            return String(
-
-                format: "%.2f Mb/s",
-
-                bitsPerSecond / 1_000_000
-
-            )
-
+            return String(format: "%.3f Mb/s", bitsPerSecond / 1_000_000)
         }
-
         if bitsPerSecond >= 1_000 {
-
-            return String(
-
-                format: "%.2f kb/s",
-
-                bitsPerSecond / 1_000
-
-            )
-
+            return String(format: "%.3f kb/s", bitsPerSecond / 1_000)
         }
-
-        return String(
-
-            format: "%.2f b/s",
-
-            bitsPerSecond
-
-        )
-
+        return String(format: "%.3f b/s", bitsPerSecond)
     }
 
-    static func formatBytes(
-
-        _ bytesPerSecond: Double
-
-    ) -> String {
-
+    static func formatBytes(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_000_000_000_000_000 {
+            return String(format: "%.3f PB/s", bytesPerSecond / 1_000_000_000_000_000)
+        }
+        if bytesPerSecond >= 1_000_000_000_000 {
+            return String(format: "%.3f TB/s", bytesPerSecond / 1_000_000_000_000)
+        }
         if bytesPerSecond >= 1_000_000_000 {
-
-            return String(
-
-                format: "%.2f GB/s",
-
-                bytesPerSecond / 1_000_000_000
-
-            )
-
+            return String(format: "%.3f GB/s", bytesPerSecond / 1_000_000_000)
         }
-
         if bytesPerSecond >= 1_000_000 {
-
-            return String(
-
-                format: "%.2f MB/s",
-
-                bytesPerSecond / 1_000_000
-
-            )
-
+            return String(format: "%.3f MB/s", bytesPerSecond / 1_000_000)
         }
-
         if bytesPerSecond >= 1_000 {
-
-            return String(
-
-                format: "%.2f KB/s",
-
-                bytesPerSecond / 1_000
-
-            )
-
+            return String(format: "%.3f KB/s", bytesPerSecond / 1_000)
         }
-
-        return String(
-
-            format: "%.2f B/s",
-
-            bytesPerSecond
-
-        )
-
+        return String(format: "%.3f B/s", bytesPerSecond)
     }
 
 }
@@ -4609,7 +4866,14 @@ struct QRTLQDJet3DPrintingView:
 
 struct ContentView: View {
     @StateObject private var state = QRTLManufacturingState()
-    private let parameters = QRTLMemoryParameters()
+
+    // Only controls the SceneKit demonstration cube. This is NOT
+    // the production architecture -- see qrtlArchitecture below.
+    private let demoParameters = QRTLMemoryParameters()
+
+    // Defines the proposed HBM-replacement architecture. Purely a
+    // numerical model; never used to size SceneKit geometry.
+    private let qrtlArchitecture = QRTLArchitectureParameters()
 
     @State private var selectedDWORD: Int = 0
     @State private var retentionInterval: Double = 1.0
@@ -4627,14 +4891,14 @@ struct ContentView: View {
         VStack(spacing: 0) {
             QRTLQDJet3DPrintingView(
                 state: state,
-                parameters: parameters
+                parameters: demoParameters
             )
             .frame(maxWidth: .infinity, minHeight: 400)
             .frame(maxHeight: .infinity)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("QRTL QD-JET 3D MEMORY")
+                    Text("QRTL MONOLITHIC 3D QD MEMORY")
                         .font(.title2.bold())
 
                     Text(state.status)
@@ -4642,9 +4906,9 @@ struct ContentView: View {
 
                     Divider()
 
-                    Text("3D QD PRINTING")
+                    Text("DEMO-SCALE QD PRINTING VISUALIZATION")
                         .font(.headline)
-                    Text("Layer: \(state.currentLayer) / \(parameters.layers)")
+                    Text("Layer: \(state.currentLayer) / \(demoParameters.layers)")
                     Text("QDs deposited: \(state.depositedQDs) / \(state.totalQDs)")
                     Text("QD jet rate: \(state.qdPrintRate)")
 
@@ -4656,7 +4920,11 @@ struct ContentView: View {
 
                     Divider()
 
-                    Text("MEMORY DATA TRANSFER")
+                    architectureTargetPanel
+
+                    Divider()
+
+                    Text("DEMO-SCALE LATTICE TRANSFER")
                         .font(.headline)
                     Text("WRITE / INPUT: \(state.writeRate)")
                     Text("READ / OUTPUT: \(state.readRate)")
@@ -4668,7 +4936,7 @@ struct ContentView: View {
                     Text("3D MEMORY CAPACITY")
                         .font(.headline)
                     Text(state.storageCapacity)
-                    Text("\(parameters.columns) × \(parameters.rows) × \(parameters.layers) QD sites")
+                    Text("\(demoParameters.columns) × \(demoParameters.rows) × \(demoParameters.layers) QD sites (demo visualization scale)")
 
                     Divider()
 
@@ -4687,7 +4955,7 @@ struct ContentView: View {
 
                     Text("MODEL NOTE")
                         .font(.headline)
-                    Text("The QD jet, 3D lattice construction, robotic wire placement, data particles, and DWORD read/write behavior are visualization and engineering simulation models. They are not experimental proof of QRTL physics or experimentally established QD-memory performance.")
+                    Text("ARCHITECTURE INTENT: QRTL is proposed as a scalable monolithic 3D quantum-dot memory architecture intended to replace or exceed HBM-class memory through massively parallel tiled access. The 10 × 8 × 6 SceneKit lattice, 12 animated wires, 100 kHz demo rate, and DWORD test are visualization-scale controls only; they do not define the intended production array size, channel count, or 1 PB/s payload-bandwidth target. All PB/s, latency, energy, reliability, and manufacturing values remain architectural targets until experimentally validated in fabricated hardware.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -4695,6 +4963,103 @@ struct ContentView: View {
             }
             .frame(maxHeight: 500)
         }
+    }
+
+    private var architectureTargetPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("QRTL HBM-REPLACEMENT ARCHITECTURE")
+                .font(.headline)
+
+            Text(qrtlArchitecture.systemIntent.rawValue)
+                .font(.subheadline.bold())
+                .foregroundStyle(.cyan)
+
+            metric("Intended Role", qrtlArchitecture.intendedRole)
+            metric("Target Definition", qrtlArchitecture.targetDescription)
+
+            Divider()
+
+            Text("SCALE MODEL")
+                .font(.subheadline.bold())
+
+            metric("Cubes / Package", "\(qrtlArchitecture.cubesPerPackage)")
+            metric("Layers / Cube", "\(qrtlArchitecture.layersPerCube)")
+            metric("Tiles / Layer", "\(qrtlArchitecture.tilesPerLayer)")
+            metric("Banks / Tile", "\(qrtlArchitecture.banksPerTile)")
+            metric(
+                "Independent Lanes",
+                QRTLArchitectureParameters.formatCount(qrtlArchitecture.totalIndependentLanes)
+            )
+            metric(
+                "Lane Access Rate",
+                QRTLArchitectureParameters.formatBitRate(qrtlArchitecture.accessFrequencyHz)
+            )
+
+            Divider()
+
+            Text("BANDWIDTH TARGET")
+                .font(.subheadline.bold())
+
+            metric(
+                "Raw Internal Array Rate",
+                QRTLArchitectureParameters.formatBitRate(qrtlArchitecture.rawArrayBitsPerSecond)
+            )
+            metric(
+                "Sustained Payload Rate",
+                QRTLArchitectureParameters.formatByteRate(qrtlArchitecture.sustainedPayloadBytesPerSecond)
+            )
+            metric(
+                "1 PB/s Target",
+                qrtlArchitecture.meetsOnePBPerSecondTarget ? "MET" : "NOT MET"
+            )
+            metric(
+                "Target Achievement",
+                String(format: "%.3fx", qrtlArchitecture.targetAchievementRatio)
+            )
+            metric(
+                "HBM Stack Equivalent",
+                String(format: "%.1f stacks at 1.2 TB/s reference", qrtlArchitecture.hbmEquivalentStackCount)
+            )
+
+            Divider()
+
+            Text("TARGET SYSTEM METRICS")
+                .font(.subheadline.bold())
+
+            metric(
+                "Target Read Latency",
+                String(format: "%.1f ns", qrtlArchitecture.targetRandomReadLatencyNanoseconds)
+            )
+            metric(
+                "Target Write Latency",
+                String(format: "%.1f ns", qrtlArchitecture.targetRandomWriteLatencyNanoseconds)
+            )
+            metric(
+                "Target Package Power",
+                String(format: "%.0f W", qrtlArchitecture.targetPowerWattsAtSustainedBandwidth)
+            )
+            metric(
+                "Target Energy / Payload Bit",
+                String(format: "%.4f pJ/bit", qrtlArchitecture.targetEnergyPerPayloadBitPicojoules)
+            )
+
+            Divider()
+
+            Text(
+                "The SceneKit cube is a visual and logical prototype. " +
+                "The architecture panel models a proposed scalable monolithic " +
+                "3D QD memory intended to replace or exceed HBM-class memory. " +
+                "Bandwidth, latency, energy, yield, and reliability figures are " +
+                "design targets until validated by fabricated hardware."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.thinMaterial)
+        )
     }
 
     private var dwordTestPanel: some View {

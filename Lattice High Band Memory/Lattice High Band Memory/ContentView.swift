@@ -79,6 +79,29 @@ enum QRTLSystemIntent: String {
     case hbmReplacementArchitecture = "HBM Replacement Architecture"
 }
 
+/// Cooling solutions considered for the package, each with a
+/// conservative sustained power-density ceiling drawn from published
+/// datacenter/HPC cooling literature. These are reference ceilings
+/// for comparison against the modeled power density -- not a
+/// guarantee that any specific hardware implementation achieves them.
+enum QRTLCoolingClass: String, CaseIterable {
+    case passiveAirAmbient = "Passive Air (No Active Cooling)"
+    case forcedAirHeatsink = "Forced-Air Heatsink"
+    case coldPlateLiquid = "Cold-Plate Liquid Cooling"
+    case microfluidicInterlayer = "Microfluidic Interlayer Cooling"
+    case twoPhaseImmersion = "Two-Phase Immersion Cooling"
+
+    var maxSustainedPowerDensityWattsPerSquareCentimeter: Double {
+        switch self {
+        case .passiveAirAmbient: return 1.0
+        case .forcedAirHeatsink: return 50.0
+        case .coldPlateLiquid: return 150.0
+        case .microfluidicInterlayer: return 300.0
+        case .twoPhaseImmersion: return 500.0
+        }
+    }
+}
+
 /// Models the proposed scalable production QRTL architecture,
 /// completely independent from the small SceneKit demo lattice
 /// rendered by QRTLMemoryParameters below. Nothing in this struct
@@ -278,6 +301,85 @@ struct QRTLArchitectureParameters {
     }
 
     // ---------------------------------------------------------
+    // THERMAL / POWER SAFETY MODEL
+    //
+    // A monolithic 3D stack concentrates its power budget into a
+    // small external footprint, so the bandwidth/power target above
+    // is only physically meaningful if the resulting power density
+    // and steady-state temperature stay inside safe limits for a
+    // stated cooling solution. This section is a check on the
+    // targets above; it does not feed back into the bandwidth model.
+    // ---------------------------------------------------------
+
+    /// Assumed cooling solution for the package. A ~10 kW monolithic
+    /// 3D stack cannot rely on passive air, so this assumption is
+    /// made explicit rather than left implied.
+    let coolingClass: QRTLCoolingClass = .twoPhaseImmersion
+
+    /// External package footprint exposed to the cooling solution.
+    /// Modeled at wafer-scale-class area (order of a 300 mm wafer),
+    /// independent of the layer/tile/bank counts above.
+    let packageFootprintAreaSquareCentimeters: Double = 700.0
+
+    /// Ambient temperature the cooling solution is designed against.
+    let ambientTemperatureCelsius: Double = 25.0
+
+    /// Maximum safe device temperature before reliability, retention,
+    /// and error rate are assumed to degrade. A QD-memory-specific
+    /// design target, not a general silicon figure.
+    let maxSafeDeviceTemperatureCelsius: Double = 85.0
+
+    /// Target device-to-ambient thermal resistance for the cooling
+    /// solution. A design target for the cooling system, not a
+    /// measured value.
+    let targetThermalResistanceCelsiusPerWatt: Double = 0.003
+
+    /// Sustained power dissipated per unit of external footprint.
+    var powerDensityWattsPerSquareCentimeter: Double {
+        guard packageFootprintAreaSquareCentimeters > 0 else { return 0 }
+        return targetPowerWattsAtSustainedBandwidth /
+            packageFootprintAreaSquareCentimeters
+    }
+
+    var maxSustainedPowerDensityForCoolingClass: Double {
+        coolingClass.maxSustainedPowerDensityWattsPerSquareCentimeter
+    }
+
+    /// How much headroom the cooling class has versus the modeled
+    /// power density. Greater than 1.0 means margin exists.
+    var thermalSafetyMarginRatio: Double {
+        guard powerDensityWattsPerSquareCentimeter > 0 else { return 0 }
+        return maxSustainedPowerDensityForCoolingClass /
+            powerDensityWattsPerSquareCentimeter
+    }
+
+    var meetsPowerDensitySafetyMargin: Bool {
+        powerDensityWattsPerSquareCentimeter <=
+            maxSustainedPowerDensityForCoolingClass
+    }
+
+    /// Steady-state device temperature estimated from the target
+    /// power and the target thermal resistance. A modeled estimate,
+    /// not a measured value from fabricated hardware.
+    var estimatedSteadyStateDeviceTemperatureCelsius: Double {
+        ambientTemperatureCelsius +
+            targetPowerWattsAtSustainedBandwidth *
+            targetThermalResistanceCelsiusPerWatt
+    }
+
+    var meetsDeviceTemperatureSafetyMargin: Bool {
+        estimatedSteadyStateDeviceTemperatureCelsius <=
+            maxSafeDeviceTemperatureCelsius
+    }
+
+    /// Overall thermal safety: both the power-density ceiling for the
+    /// stated cooling class and the steady-state temperature estimate
+    /// must stay within their safe limits.
+    var meetsThermalSafety: Bool {
+        meetsPowerDensitySafetyMargin && meetsDeviceTemperatureSafetyMargin
+    }
+
+    // ---------------------------------------------------------
     // VALIDATION
     // ---------------------------------------------------------
 
@@ -310,6 +412,23 @@ struct QRTLArchitectureParameters {
             )
         }
 
+        if !meetsPowerDensitySafetyMargin {
+            warnings.append(
+                "Power density (\(String(format: "%.1f", powerDensityWattsPerSquareCentimeter)) W/cm2) " +
+                "exceeds the sustained ceiling for \(coolingClass.rawValue) " +
+                "(\(String(format: "%.1f", maxSustainedPowerDensityForCoolingClass)) W/cm2)."
+            )
+        }
+
+        if !meetsDeviceTemperatureSafetyMargin {
+            warnings.append(
+                "Estimated steady-state device temperature " +
+                "(\(String(format: "%.1f", estimatedSteadyStateDeviceTemperatureCelsius))C) " +
+                "exceeds the max safe device temperature " +
+                "(\(String(format: "%.1f", maxSafeDeviceTemperatureCelsius))C)."
+            )
+        }
+
         return warnings
     }
 }
@@ -331,6 +450,21 @@ extension QRTLArchitectureParameters {
             "HBM STACK EQUIVALENT: \(String(format: "%.1f", hbmEquivalentStackCount)) stacks",
             "TARGET RANDOM READ LATENCY: \(String(format: "%.1f ns", targetRandomReadLatencyNanoseconds))",
             "TARGET ENERGY: \(String(format: "%.4f pJ/bit", targetEnergyPerPayloadBitPicojoules))"
+        ]
+    }
+
+    func thermalSummary() -> [String] {
+        [
+            "COOLING CLASS: \(coolingClass.rawValue)",
+            "PACKAGE FOOTPRINT: \(String(format: "%.0f", packageFootprintAreaSquareCentimeters)) cm2",
+            "POWER DENSITY: \(String(format: "%.2f", powerDensityWattsPerSquareCentimeter)) W/cm2",
+            "COOLING CLASS CEILING: \(String(format: "%.1f", maxSustainedPowerDensityForCoolingClass)) W/cm2",
+            "THERMAL SAFETY MARGIN: \(String(format: "%.2f", thermalSafetyMarginRatio))x",
+            "POWER DENSITY SAFE: \(meetsPowerDensitySafetyMargin ? "YES" : "NO")",
+            "ESTIMATED DEVICE TEMP: \(String(format: "%.1f", estimatedSteadyStateDeviceTemperatureCelsius))C",
+            "MAX SAFE DEVICE TEMP: \(String(format: "%.1f", maxSafeDeviceTemperatureCelsius))C",
+            "TEMPERATURE SAFE: \(meetsDeviceTemperatureSafetyMargin ? "YES" : "NO")",
+            "OVERALL THERMAL SAFETY: \(meetsThermalSafety ? "SAFE" : "AT RISK")"
         ]
     }
 
@@ -1193,97 +1327,89 @@ final class QRTLQDJet3DPrintingScene {
 
 
         // ================================================================
-
         // Camera
-
         // ================================================================
 
         let cameraNode = SCNNode()
-
         let camera = SCNCamera()
 
         camera.fieldOfView = 50.0
-
         camera.zNear = 0.1
-
         camera.zFar = 200.0
 
         cameraNode.camera = camera
 
         // ---------------------------------------------------------------
-
-        // Calculate the vertical center of the printed QD cube.
-
+        // Frame the camera around the actual scene geometry instead of a
+        // fixed hand-tuned offset, so it zooms in tightly on the lattice
+        // (and stays correctly framed if columns/rows/layers/spacing
+        // ever change) rather than sitting far back with the lattice
+        // occupying only a small part of the frame.
         //
-
-        // buildLattice() starts the first layer at:
-
-        //
-
-        //     y = 0.75
-
-        //
-
-        // Each layer is separated by latticeSpacing.
-
+        // The scene the camera must fit spans:
+        //   - the QD lattice footprint: columns x rows x latticeSpacing
+        //   - vertically, from the base of the lattice (y = 0.75, set
+        //     in buildLattice()) up to the nozzle carriage height
+        //     (y = 6.5, set in the printer setup above), so the
+        //     nozzle stays in frame together with the growing cube.
         // ---------------------------------------------------------------
 
-        let cubeCenterY =
+        let latticeHalfWidth =
+            Float(parameters.columns - 1) * parameters.latticeSpacing * 0.5
+        let latticeHalfDepth =
+            Float(parameters.rows - 1) * parameters.latticeSpacing * 0.5
 
-            0.75 +
+        let sceneBottomY: Float = 0.75
+        let sceneTopY: Float = 6.5
+        let sceneCenterY = (sceneBottomY + sceneTopY) * 0.5
+        let sceneHalfHeight = (sceneTopY - sceneBottomY) * 0.5
 
-            Float(parameters.layers - 1) *
+        // Point the camera at the true center of that volume.
+        let cameraTarget = SCNVector3(0.0, sceneCenterY, 0.0)
 
-            parameters.latticeSpacing *
+        // Half-diagonal of the scene's bounding box, padded slightly so
+        // the outermost QD spheres and the nozzle aren't clipped at the
+        // edge of the frame.
+        let sceneBoundingRadius =
+            sqrt(
+                latticeHalfWidth * latticeHalfWidth +
+                latticeHalfDepth * latticeHalfDepth +
+                sceneHalfHeight * sceneHalfHeight
+            ) + Float(parameters.qdRadius)
 
-            0.5
+        // Distance needed to fit a sphere of sceneBoundingRadius inside
+        // the camera's field of view, with a small framing margin.
+        let halfFieldOfViewRadians =
+            Float(camera.fieldOfView) * 0.5 * Float.pi / 180.0
 
-        // ---------------------------------------------------------------
+        let framingPadding: Float = 1.1
 
-        // Aim slightly above the cube center.
+        let cameraDistance =
+            (sceneBoundingRadius / sin(halfFieldOfViewRadians)) *
+            framingPadding
 
-        //
-
-        // This keeps both:
-
-        //     • the growing QD cube
-
-        //     • the printing nozzle
-
-        //
-
-        // inside the camera view.
-
-        // ---------------------------------------------------------------
-
-        let cameraTarget = SCNVector3(
-
-            0.0,
-
-            cubeCenterY + 1.5,
-
-            0.0
-
+        // Keep the same cinematic viewing angle as before (slightly to
+        // the side, slightly above, looking back toward the lattice),
+        // just placed at the distance that actually zooms in on it.
+        let viewDirectionRaw = SCNVector3(0.6, 0.35, 0.8)
+        let viewDirectionLength = sqrt(
+            viewDirectionRaw.x * viewDirectionRaw.x +
+            viewDirectionRaw.y * viewDirectionRaw.y +
+            viewDirectionRaw.z * viewDirectionRaw.z
         )
-
-        // ---------------------------------------------------------------
-
-        // Camera position.
-
-        // ---------------------------------------------------------------
+        let viewDirection = SCNVector3(
+            viewDirectionRaw.x / viewDirectionLength,
+            viewDirectionRaw.y / viewDirectionLength,
+            viewDirectionRaw.z / viewDirectionLength
+        )
 
         cameraNode.position = SCNVector3(
-
-            12.0,
-
-            cubeCenterY + 6.0,
-
-            16.0
-
+            cameraTarget.x + viewDirection.x * cameraDistance,
+            cameraTarget.y + viewDirection.y * cameraDistance,
+            cameraTarget.z + viewDirection.z * cameraDistance
         )
 
-        // Point camera directly at the cube.
-
+        // Point camera directly at the lattice/nozzle volume.
         cameraNode.lookAt(cameraTarget)
 
         scene.rootNode.addChildNode(cameraNode)
@@ -4924,6 +5050,10 @@ struct ContentView: View {
 
                     Divider()
 
+                    thermalSafetyPanel
+
+                    Divider()
+
                     Text("DEMO-SCALE LATTICE TRANSFER")
                         .font(.headline)
                     Text("WRITE / INPUT: \(state.writeRate)")
@@ -5051,6 +5181,104 @@ struct ContentView: View {
                 "3D QD memory intended to replace or exceed HBM-class memory. " +
                 "Bandwidth, latency, energy, yield, and reliability figures are " +
                 "design targets until validated by fabricated hardware."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.thinMaterial)
+        )
+    }
+
+    private var thermalSafetyPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("THERMAL / POWER SAFETY")
+                .font(.headline)
+
+            Text(qrtlArchitecture.meetsThermalSafety ? "WITHIN SAFE THERMAL MARGIN" : "THERMAL RISK — EXCEEDS MODELED SAFE LIMITS")
+                .font(.subheadline.bold())
+                .foregroundStyle(qrtlArchitecture.meetsThermalSafety ? .green : .red)
+
+            metric("Cooling Class", qrtlArchitecture.coolingClass.rawValue)
+            metric(
+                "Package Footprint",
+                String(format: "%.0f cm²", qrtlArchitecture.packageFootprintAreaSquareCentimeters)
+            )
+
+            Divider()
+
+            Text("POWER DENSITY")
+                .font(.subheadline.bold())
+
+            metric(
+                "Modeled Power Density",
+                String(format: "%.2f W/cm²", qrtlArchitecture.powerDensityWattsPerSquareCentimeter)
+            )
+            metric(
+                "Cooling Class Ceiling",
+                String(format: "%.1f W/cm²", qrtlArchitecture.maxSustainedPowerDensityForCoolingClass)
+            )
+            metric(
+                "Safety Margin",
+                String(format: "%.2fx", qrtlArchitecture.thermalSafetyMarginRatio)
+            )
+            metric(
+                "Power Density Safe",
+                qrtlArchitecture.meetsPowerDensitySafetyMargin ? "YES" : "NO"
+            )
+
+            Divider()
+
+            Text("STEADY-STATE TEMPERATURE")
+                .font(.subheadline.bold())
+
+            metric(
+                "Ambient Temperature",
+                String(format: "%.1f °C", qrtlArchitecture.ambientTemperatureCelsius)
+            )
+            metric(
+                "Target Thermal Resistance",
+                String(format: "%.4f °C/W", qrtlArchitecture.targetThermalResistanceCelsiusPerWatt)
+            )
+            metric(
+                "Estimated Device Temperature",
+                String(format: "%.1f °C", qrtlArchitecture.estimatedSteadyStateDeviceTemperatureCelsius)
+            )
+            metric(
+                "Max Safe Device Temperature",
+                String(format: "%.1f °C", qrtlArchitecture.maxSafeDeviceTemperatureCelsius)
+            )
+            metric(
+                "Temperature Safe",
+                qrtlArchitecture.meetsDeviceTemperatureSafetyMargin ? "YES" : "NO"
+            )
+
+            if !qrtlArchitecture.validationWarnings.isEmpty {
+                Divider()
+
+                Text("WARNINGS")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.orange)
+
+                ForEach(qrtlArchitecture.validationWarnings, id: \.self) { warning in
+                    Text("• \(warning)")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Divider()
+
+            Text(
+                "This panel checks the declared power target against a stated " +
+                "cooling class and a modeled thermal resistance — it is a design " +
+                "check on the architecture target, not a measurement from " +
+                "fabricated hardware. A monolithic 3D stack concentrates heat " +
+                "into a small footprint, so the cooling class stated here is a " +
+                "load-bearing assumption of the whole 1 PB/s target, not an " +
+                "afterthought."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -5380,3 +5608,4 @@ extension QRTLDataRateModel {
     }
 
 }
+

@@ -1,159 +1,4621 @@
+
+
+//  QRTLQDJet3DPrintingScene.swift
+
+//
+
+//  QRTL Quantum-Dot 3D Memory Manufacturing Animation
+
+//
+
+//  Manufacturing sequence:
+
+//
+
+//  EXTERNAL QDs
+
+//       ↓
+
+//  QD INK RESERVOIR
+
+//       ↓
+
+//  EHD QD JET
+
+//       ↓
+
+//  XYZ PRECISION POSITIONING
+
+//       ↓
+
+//  LAYER-BY-LAYER QD DEPOSITION
+
+//       ↓
+
+//  COMPLETE 3D QD CUBE
+
+//       ↓
+
+//  ROBOTIC ACCESS-WIRE PLACEMENT
+
+//       ↓
+
+//  WIRE / QD REGISTRATION
+
+//       ↓
+
+//  READ / WRITE DATA TRANSFER
+
+//
+
+//  IMPORTANT:
+
+//  Data-rate values are configurable simulation targets.
+
+//  They are NOT experimentally established QD-memory performance.
+
+//
+
+//  SceneKit is used here because this project already uses SceneKit.
+
+//  Apple currently marks SceneKit as deprecated in favor of RealityKit.
+
+//
+
+import Foundation
+
 import SwiftUI
+
 import SceneKit
+
+import UIKit
+
 import Combine
 
-// ================================================================
-// QRTL DWORD MEMORY TEST
-// ================================================================
-//
-// One DWORD = 32 bits
-//
-// Memory pipeline:
-//
-// ADDRESS
-//    ↓
-// SELECT 32 CELLS
-//    ↓
-// WRITE 0 / 1
-//    ↓
-// LATTICE BIT STATE
-//    ↓
-// WRITE TIME
-//    ↓
-// READ ADDRESS
-//    ↓
-// READ SIGNAL
-//    ↓
-// THRESHOLD DETECTION
-//    ↓
-// DETECTED 0 / 1
-//    ↓
-// RECONSTRUCT DWORD
-//    ↓
-// VERIFY
-//    ↓
-// RETENTION
-//    ↓
-// READ/WRITE CYCLES
-//    ↓
-// ERROR RATE
-//
-// This is an engineering simulation, not experimental proof of
-// the proposed QRTL physical mechanism.
-// ================================================================
+// MARK: - QD MEMORY PARAMETERS
 
+struct QRTLMemoryParameters {
 
-// MARK: - DWORD Metrics
+    // ---------------------------------------------------------
 
-struct QRTLDWordMetrics {
+    // 3D LATTICE
 
-    // ------------------------------------------------------------
-    // 1. MEMORY ADDRESS
-    // ------------------------------------------------------------
+    // ---------------------------------------------------------
 
-    var memoryAddress: UInt32 = 0
+    var columns: Int = 10
 
-    // Physical cell indices associated with this DWORD.
-    var cellStartIndex: Int = 0
-    var cellEndIndex: Int = 31
+    var rows: Int = 8
 
-    // ------------------------------------------------------------
-    // 2. WRITE COMMAND
-    // ------------------------------------------------------------
+    var layers: Int = 6
 
-    var writeCommand: UInt32 = 0
+    var latticeSpacing: Float = 1.0
 
-    // ------------------------------------------------------------
-    // 3. BIT STATE
-    // ------------------------------------------------------------
+    var qdRadius: CGFloat = 0.11
 
-    var bitStates: [Int] = Array(repeating: 0, count: 32)
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 4. WRITE TIME
-    // ------------------------------------------------------------
+    // QD PRINTING
 
-    var writeTimeSeconds: Double = 0
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 5. READ COMMAND
-    // ------------------------------------------------------------
+    var qdPrintFrequencyHz: Double = 120.0
 
-    var readAddress: UInt32 = 0
+    var qdsPerJetEvent: Double = 1.0
 
-    // ------------------------------------------------------------
-    // 6. READ SIGNAL
-    // ------------------------------------------------------------
+    var printerUtilization: Double = 0.80
 
-    var readSignals: [Double] = Array(repeating: 0, count: 32)
+    var placementEfficiency: Double = 0.95
 
-    // ------------------------------------------------------------
-    // 7. DETECTED BIT
-    // ------------------------------------------------------------
+    // This remains the configured/model print duration.
 
-    var detectedBits: [Int] = Array(repeating: 0, count: 32)
+    // The visual animation uses a separate print interval below.
 
-    // ------------------------------------------------------------
-    // 8. READ TIME
-    // ------------------------------------------------------------
+    var qdAnimationDuration: TimeInterval = 0.035
 
-    var readTimeSeconds: Double = 0
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 9. WRITE ACCURACY
-    // ------------------------------------------------------------
+    // ACCESS WIRES
 
-    var writeAccuracyPercent: Double = 0
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 10. READ ACCURACY
-    // ------------------------------------------------------------
+    var wireCount: Int = 12
 
-    var readAccuracyPercent: Double = 0
+    var sitesPerWire: Int = 40
 
-    // ------------------------------------------------------------
-    // 11. BIT RETENTION
-    // ------------------------------------------------------------
+    var wireAnimationDuration: TimeInterval = 0.65
 
-    var retentionSeconds: Double = 0
-    var retentionPercent: Double = 0
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 12. READ/WRITE CYCLES
-    // ------------------------------------------------------------
+    // MEMORY
 
-    var requestedCycles: Int = 0
-    var successfulCycles: Int = 0
-    var cycleSuccessRatePercent: Double = 0
+    // ---------------------------------------------------------
 
-    // ------------------------------------------------------------
-    // 13. ERROR RATE
-    // ------------------------------------------------------------
+    var bitsPerQD: Double = 1.0
 
-    var incorrectBits: Int = 0
-    var totalBitsTested: Int = 0
-    var errorRatePercent: Double = 0
+    var readChannels: Double = 12
 
-    // ------------------------------------------------------------
-    // FINAL
-    // ------------------------------------------------------------
+    var writeChannels: Double = 12
 
-    var returnedDWORD: UInt32 = 0
+    var readFrequencyHz: Double = 100_000
 
-    var verificationPassed: Bool = false
+    var writeFrequencyHz: Double = 100_000
+
+    var readUtilization: Double = 0.85
+
+    var writeUtilization: Double = 0.85
+
+    var readEfficiency: Double = 0.995
+
+    var writeEfficiency: Double = 0.995
+
+    // ---------------------------------------------------------
+
+    // DATA ANIMATION
+
+    // ---------------------------------------------------------
+
+    var dataParticleCount: Int = 12
+
+}
+
+// MARK: - DATA RATE MODEL
+
+struct QRTLDataRateModel {
+
+    let parameters: QRTLMemoryParameters
+
+    // N_QD = columns × rows × layers
+
+    var totalQDSites: Double {
+
+        Double(
+
+            parameters.columns *
+
+            parameters.rows *
+
+            parameters.layers
+
+        )
+
+    }
+
+    // C = N_QD × B_QD
+
+    var storageBits: Double {
+
+        totalQDSites *
+
+        parameters.bitsPerQD
+
+    }
+
+    var storageBytes: Double {
+
+        storageBits / 8.0
+
+    }
+
+    // ---------------------------------------------------------
+
+    // WRITE
+
+    //
+
+    // R_in =
+
+    // N_w × f_w × B_QD × U_w × η_w
+
+    // ---------------------------------------------------------
+
+    var writeBitsPerSecond: Double {
+
+        parameters.writeChannels *
+
+        parameters.writeFrequencyHz *
+
+        parameters.bitsPerQD *
+
+        parameters.writeUtilization *
+
+        parameters.writeEfficiency
+
+    }
+
+    // ---------------------------------------------------------
+
+    // READ
+
+    //
+
+    // R_out =
+
+    // N_r × f_r × B_QD × U_r × η_r
+
+    // ---------------------------------------------------------
+
+    var readBitsPerSecond: Double {
+
+        parameters.readChannels *
+
+        parameters.readFrequencyHz *
+
+        parameters.bitsPerQD *
+
+        parameters.readUtilization *
+
+        parameters.readEfficiency
+
+    }
+
+    var writeBytesPerSecond: Double {
+
+        writeBitsPerSecond / 8.0
+
+    }
+
+    var readBytesPerSecond: Double {
+
+        readBitsPerSecond / 8.0
+
+    }
+
+    // ---------------------------------------------------------
+
+    // QD PRINTING RATE
+
+    //
+
+    // R_QD =
+
+    // f_jet × QDs/event × U × η
+
+    // ---------------------------------------------------------
+
+    var qdsPrintedPerSecond: Double {
+
+        parameters.qdPrintFrequencyHz *
+
+        parameters.qdsPerJetEvent *
+
+        parameters.printerUtilization *
+
+        parameters.placementEfficiency
+
+    }
+
+    // ---------------------------------------------------------
+
+    // THEORETICAL LIMITS
+
+    // ---------------------------------------------------------
+
+    var theoreticalWriteBitsPerSecond: Double {
+
+        parameters.writeChannels *
+
+        parameters.writeFrequencyHz *
+
+        parameters.bitsPerQD
+
+    }
+
+    var theoreticalReadBitsPerSecond: Double {
+
+        parameters.readChannels *
+
+        parameters.readFrequencyHz *
+
+        parameters.bitsPerQD
+
+    }
+
+    // ---------------------------------------------------------
+
+    // FORMATTING
+
+    // ---------------------------------------------------------
+
+    static func formatRate(
+
+        _ bitsPerSecond: Double
+
+    ) -> String {
+
+        if bitsPerSecond >= 1_000_000_000 {
+
+            return String(
+
+                format: "%.2f Gb/s",
+
+                bitsPerSecond / 1_000_000_000
+
+            )
+
+        }
+
+        if bitsPerSecond >= 1_000_000 {
+
+            return String(
+
+                format: "%.2f Mb/s",
+
+                bitsPerSecond / 1_000_000
+
+            )
+
+        }
+
+        if bitsPerSecond >= 1_000 {
+
+            return String(
+
+                format: "%.2f kb/s",
+
+                bitsPerSecond / 1_000
+
+            )
+
+        }
+
+        return String(
+
+            format: "%.2f b/s",
+
+            bitsPerSecond
+
+        )
+
+    }
+
+    static func formatBytes(
+
+        _ bytesPerSecond: Double
+
+    ) -> String {
+
+        if bytesPerSecond >= 1_000_000_000 {
+
+            return String(
+
+                format: "%.2f GB/s",
+
+                bytesPerSecond / 1_000_000_000
+
+            )
+
+        }
+
+        if bytesPerSecond >= 1_000_000 {
+
+            return String(
+
+                format: "%.2f MB/s",
+
+                bytesPerSecond / 1_000_000
+
+            )
+
+        }
+
+        if bytesPerSecond >= 1_000 {
+
+            return String(
+
+                format: "%.2f KB/s",
+
+                bytesPerSecond / 1_000
+
+            )
+
+        }
+
+        return String(
+
+            format: "%.2f B/s",
+
+            bytesPerSecond
+
+        )
+
+    }
+
+}
+
+// MARK: - MANUFACTURING STATE
+
+@MainActor
+
+final class QRTLManufacturingState: ObservableObject {
+
+    // MARK: - Manufacturing Progress
+
+    @Published var currentLayer: Int = 0
+
+    @Published var depositedQDs: Int = 0
+
+    @Published var totalQDs: Int = 0
+
+    @Published var placedWires: Int = 0
+
+    @Published var totalWires: Int = 0
+
+    // IMPORTANT:
+
+    // This is the textual manufacturing status.
+
+    // It is deliberately NOT called manufacturingState,
+
+    // because manufacturingState is the QRTLManufacturingState object.
+
+    @Published var status: String = "INITIALIZING"
+
+    // MARK: - Data Rates
+
+    @Published var writeRate: String = "0 b/s"
+
+    @Published var readRate: String = "0 b/s"
+
+    @Published var writeBytes: String = "0 B/s"
+
+    @Published var readBytes: String = "0 B/s"
+
+    // MARK: - Storage
+
+    @Published var storageCapacity: String = "0 B"
+
+    // MARK: - Manufacturing Rate
+
+    @Published var qdPrintRate: String = "0.00 QD/s"
+
+    // MARK: - DWORD TEST STATE
+
+    @Published var dwordMetrics = QRTLDWordMetrics()
+    @Published var memoryTestStatus: String = "READY"
+
+    /// Base byte address for the first DWORD.
+    let dwordBaseAddress: UInt32 = 0x0100
+
+    /// One logical bit per physical QD storage site.
+    var memoryBitCells: [Int: Int] = [:]
+
+    let lowSignal: Double = 0.10
+    let highSignal: Double = 1.00
+    let readThreshold: Double = 0.50
+    let simulatedWriteTimePerBit: Double = 0.000001
+    let simulatedReadTimePerBit: Double = 0.0000005
+
+    // MARK: - Update
+
+    func update(
+
+        layer: Int,
+
+        deposited: Int,
+
+        total: Int,
+
+        wires: Int,
+
+        totalWires: Int,
+
+        state: String,
+
+        rateModel: QRTLDataRateModel
+
+    ) {
+
+        currentLayer = layer
+
+        depositedQDs = deposited
+
+        totalQDs = total
+
+        placedWires = wires
+
+        self.totalWires = totalWires
+
+        status = state
+
+        writeRate =
+
+            QRTLDataRateModel.formatRate(
+
+                rateModel.writeBitsPerSecond
+
+            )
+
+        readRate =
+
+            QRTLDataRateModel.formatRate(
+
+                rateModel.readBitsPerSecond
+
+            )
+
+        writeBytes =
+
+            QRTLDataRateModel.formatBytes(
+
+                rateModel.writeBytesPerSecond
+
+            )
+
+        readBytes =
+
+            QRTLDataRateModel.formatBytes(
+
+                rateModel.readBytesPerSecond
+
+            )
+
+        storageCapacity =
+
+            QRTLDataRateModel.formatBytes(
+
+                rateModel.storageBytes
+
+            )
+
+        qdPrintRate =
+
+            String(
+
+                format: "%.2f QD/s",
+
+                rateModel.qdsPrintedPerSecond
+
+            )
+
+    }
+
 }
 
 
-// MARK: - Memory Test State
+// MARK: - DWORD MEMORY VALIDATION
+
+/// Engineering-level logical validation of one 32-bit memory word.
+/// The test maps one DWORD to 32 physical QD lattice sites.
+struct QRTLDWordMetrics {
+    var memoryAddress: UInt32 = 0
+    var cellStartIndex: Int = 0
+    var cellEndIndex: Int = 31
+    var writeCommand: UInt32 = 0
+    var bitStates: [Int] = Array(repeating: 0, count: 32)
+    var writeTimeSeconds: Double = 0
+    var readAddress: UInt32 = 0
+    var readSignals: [Double] = Array(repeating: 0, count: 32)
+    var detectedBits: [Int] = Array(repeating: 0, count: 32)
+    var readTimeSeconds: Double = 0
+    var writeAccuracyPercent: Double = 0
+    var readAccuracyPercent: Double = 0
+    var retentionSeconds: Double = 0
+    var retentionPercent: Double = 0
+    var requestedCycles: Int = 0
+    var successfulCycles: Int = 0
+    var cycleSuccessRatePercent: Double = 0
+    var incorrectBits: Int = 0
+    var totalBitsTested: Int = 0
+    var errorRatePercent: Double = 0
+    var returnedDWORD: UInt32 = 0
+    var verificationPassed: Bool = false
+}
+
+extension QRTLManufacturingState {
+    func resetDWORDMetrics() {
+        dwordMetrics = QRTLDWordMetrics()
+        memoryTestStatus = "READY"
+    }
+
+    @MainActor
+    func runDWORDTest(
+        address: UInt32,
+        value: UInt32,
+        retentionInterval: Double = 1.0,
+        cycles: Int = 100
+    ) {
+        let start = CFAbsoluteTimeGetCurrent()
+        let cellStart = Int(address >= dwordBaseAddress ? (address - dwordBaseAddress) / 4 : 0) * 32
+        dwordMetrics.memoryAddress = address
+        dwordMetrics.cellStartIndex = cellStart
+        dwordMetrics.cellEndIndex = cellStart + 31
+        dwordMetrics.writeCommand = value
+
+        // WRITE: each DWORD bit is stored in one physical lattice cell.
+        for bitIndex in 0..<32 {
+            let bit = Int((value >> UInt32(bitIndex)) & 1)
+            let cell = cellStart + bitIndex
+            memoryBitCells[cell] = bit
+            dwordMetrics.bitStates[bitIndex] = bit
+        }
+
+        dwordMetrics.writeTimeSeconds = max(
+            CFAbsoluteTimeGetCurrent() - start,
+            32.0 * simulatedWriteTimePerBit
+        )
+
+        var writeCorrect = 0
+        for bitIndex in 0..<32 {
+            let expected = Int((value >> UInt32(bitIndex)) & 1)
+            let actual = memoryBitCells[cellStart + bitIndex] ?? 0
+            if expected == actual { writeCorrect += 1 }
+        }
+        dwordMetrics.writeAccuracyPercent = Double(writeCorrect) / 32.0 * 100.0
+
+        // READ: convert each stored cell state into a signal and threshold it.
+        dwordMetrics.readAddress = address
+        let readStart = CFAbsoluteTimeGetCurrent()
+        var returned: UInt32 = 0
+        for bitIndex in 0..<32 {
+            let physicalState = memoryBitCells[cellStart + bitIndex] ?? 0
+            let signal = lowSignal + (highSignal - lowSignal) * Double(physicalState)
+            dwordMetrics.readSignals[bitIndex] = signal
+            let detected = signal >= readThreshold ? 1 : 0
+            dwordMetrics.detectedBits[bitIndex] = detected
+            if detected == 1 {
+                returned |= UInt32(1) << UInt32(bitIndex)
+            }
+        }
+        dwordMetrics.readTimeSeconds = max(
+            CFAbsoluteTimeGetCurrent() - readStart,
+            32.0 * simulatedReadTimePerBit
+        )
+        dwordMetrics.returnedDWORD = returned
+
+        calculateDWORDAccuracy(expected: value, returned: returned)
+
+        // Retention metric: in this deterministic model the stored lattice
+        // state is sampled again after the requested interval. No drift is
+        // injected unless the user later adds a physical error model.
+        dwordMetrics.retentionSeconds = retentionInterval
+        let retentionReturned = readStoredDWORD(address: address)
+        var retained = 0
+        for bitIndex in 0..<32 {
+            if dwordMetrics.bitStates[bitIndex] == Int((retentionReturned >> UInt32(bitIndex)) & 1) {
+                retained += 1
+            }
+        }
+        dwordMetrics.retentionPercent = Double(retained) / 32.0 * 100.0
+
+        // Repeated write/read cycles.
+        dwordMetrics.requestedCycles = max(0, cycles)
+        dwordMetrics.successfulCycles = 0
+        if cycles > 0 {
+            for _ in 0..<cycles {
+                for bitIndex in 0..<32 {
+                    memoryBitCells[cellStart + bitIndex] = Int((value >> UInt32(bitIndex)) & 1)
+                }
+                let cycleRead = readStoredDWORD(address: address)
+                if cycleRead == value {
+                    dwordMetrics.successfulCycles += 1
+                }
+            }
+            dwordMetrics.cycleSuccessRatePercent =
+                Double(dwordMetrics.successfulCycles) / Double(cycles) * 100.0
+        } else {
+            dwordMetrics.cycleSuccessRatePercent = 0
+        }
+
+        // Final verification after the cycle test.
+        let finalReturned = readStoredDWORD(address: address)
+        calculateDWORDAccuracy(expected: value, returned: finalReturned)
+        dwordMetrics.returnedDWORD = finalReturned
+        dwordMetrics.verificationPassed = finalReturned == value
+
+        memoryTestStatus = dwordMetrics.verificationPassed
+            ? "DWORD TEST PASS"
+            : "DWORD TEST FAIL"
+        status = memoryTestStatus
+    }
+
+    private func readStoredDWORD(address: UInt32) -> UInt32 {
+        let cellStart = Int(address >= dwordBaseAddress ? (address - dwordBaseAddress) / 4 : 0) * 32
+        var result: UInt32 = 0
+        for bitIndex in 0..<32 {
+            let physicalState = memoryBitCells[cellStart + bitIndex] ?? 0
+            let signal = lowSignal + (highSignal - lowSignal) * Double(physicalState)
+            let detected = signal >= readThreshold ? 1 : 0
+            if detected == 1 {
+                result |= UInt32(1) << UInt32(bitIndex)
+            }
+        }
+        return result
+    }
+
+    private func calculateDWORDAccuracy(expected: UInt32, returned: UInt32) {
+        var correct = 0
+        for bitIndex in 0..<32 {
+            let a = Int((expected >> UInt32(bitIndex)) & 1)
+            let b = Int((returned >> UInt32(bitIndex)) & 1)
+            if a == b { correct += 1 }
+        }
+        dwordMetrics.readAccuracyPercent = Double(correct) / 32.0 * 100.0
+        dwordMetrics.incorrectBits = 32 - correct
+        dwordMetrics.totalBitsTested = 32
+        dwordMetrics.errorRatePercent = Double(dwordMetrics.incorrectBits) / 32.0 * 100.0
+    }
+
+    func dwordHex(_ value: UInt32) -> String {
+        String(format: "0x%08X", value)
+    }
+
+    func dwordBinary(_ value: UInt32) -> String {
+        let bits = String(value, radix: 2)
+        return String(repeating: "0", count: max(0, 32 - bits.count)) + bits
+    }
+}
+
+// MARK: - QRTL SCENE
 
 @MainActor
-final class QRTLMemoryTestState: ObservableObject {
 
-    @Published var readAddress: UInt32 = 0
+final class QRTLQDJet3DPrintingScene {
 
-    @Published var baseAddress: UInt32 = 0x0100
+    private let dataRateModel: QRTLDataRateModel
 
-    @Published var testDWORDs: [UInt32] = [
+    let scene: SCNScene
+
+    private let parameters:
+
+        QRTLMemoryParameters
+
+    private weak var state:
+
+        QRTLManufacturingState?
+
+    // ---------------------------------------------------------
+
+    // ROOTS
+
+    // ---------------------------------------------------------
+
+    private let manufacturingRoot =
+
+        SCNNode()
+
+    private let printerRoot =
+
+        SCNNode()
+
+    private let latticeRoot =
+
+        SCNNode()
+
+    private let robotRoot =
+
+        SCNNode()
+
+    private let wireRoot =
+
+        SCNNode()
+
+    private let dataRoot =
+
+        SCNNode()
+
+    // ---------------------------------------------------------
+
+    // PRINTER
+
+    // ---------------------------------------------------------
+
+    private let nozzle =
+
+        SCNNode()
+
+    private let nozzleCarriage =
+
+        SCNNode()
+
+    private let reservoir =
+
+        SCNNode()
+
+    // ---------------------------------------------------------
+
+    // ROBOT
+
+    // ---------------------------------------------------------
+
+    private let robotArm =
+
+        SCNNode()
+
+    private let robotForearm =
+
+        SCNNode()
+
+    private let robotGripper =
+
+        SCNNode()
+
+    // ---------------------------------------------------------
+
+    // LATTICE
+
+    // ---------------------------------------------------------
+
+    private var qdNodes:
+
+        [SCNNode] = []
+
+    private var accessWires:
+
+        [SCNNode] = []
+
+    private var dataParticles:
+
+        [SCNNode] = []
+
+    private var layerVolumes:
+
+        [SCNNode] = []
+
+    private var latticeCube:
+
+        SCNNode?
+
+    // First 32 QD sites are the physical cells used by the DWORD test.
+    private var dwordBarrierNodes: [SCNNode] = []
+
+    // ---------------------------------------------------------
+
+    // ANIMATION
+
+    // ---------------------------------------------------------
+
+    private var animationGeneration = 0
+
+    init(
+        parameters: QRTLMemoryParameters,
+        state: QRTLManufacturingState
+    ) {
+        self.parameters = parameters
+
+        self.state = state
+
+        self.dataRateModel =
+            QRTLDataRateModel(
+                parameters: parameters
+            )
+
+        self.scene =
+            SCNScene()
+
+        configureScene()
+
+        buildEnvironment()
+
+        buildQDJetPrinter()
+
+        buildLattice()
+
+        buildDWORDStorageIndicators()
+
+        buildRoboticWireSystem()
+
+        buildDataInterface()
+    }
+    
+    private func configureScene() {
+
+        // ================================================================
+
+        // Scene
+
+        // ================================================================
+
+        scene.background.contents = UIColor(
+
+            white: 0.008,
+
+            alpha: 1.0
+
+        )
+
+
+
+        // ================================================================
+
+        // Manufacturing root
+
+        // ================================================================
+
+        scene.rootNode.addChildNode(manufacturingRoot)
+
+        manufacturingRoot.addChildNode(printerRoot)
+
+        manufacturingRoot.addChildNode(latticeRoot)
+
+        manufacturingRoot.addChildNode(robotRoot)
+
+        manufacturingRoot.addChildNode(wireRoot)
+
+        manufacturingRoot.addChildNode(dataRoot)
+
+
+
+        // ================================================================
+
+        // Camera
+
+        // ================================================================
+
+        let cameraNode = SCNNode()
+
+        let camera = SCNCamera()
+
+        camera.fieldOfView = 50.0
+
+        camera.zNear = 0.1
+
+        camera.zFar = 200.0
+
+        cameraNode.camera = camera
+
+        // ---------------------------------------------------------------
+
+        // Calculate the vertical center of the printed QD cube.
+
+        //
+
+        // buildLattice() starts the first layer at:
+
+        //
+
+        //     y = 0.75
+
+        //
+
+        // Each layer is separated by latticeSpacing.
+
+        // ---------------------------------------------------------------
+
+        let cubeCenterY =
+
+            0.75 +
+
+            Float(parameters.layers - 1) *
+
+            parameters.latticeSpacing *
+
+            0.5
+
+        // ---------------------------------------------------------------
+
+        // Aim slightly above the cube center.
+
+        //
+
+        // This keeps both:
+
+        //     • the growing QD cube
+
+        //     • the printing nozzle
+
+        //
+
+        // inside the camera view.
+
+        // ---------------------------------------------------------------
+
+        let cameraTarget = SCNVector3(
+
+            0.0,
+
+            cubeCenterY + 1.5,
+
+            0.0
+
+        )
+
+        // ---------------------------------------------------------------
+
+        // Camera position.
+
+        // ---------------------------------------------------------------
+
+        cameraNode.position = SCNVector3(
+
+            12.0,
+
+            cubeCenterY + 6.0,
+
+            16.0
+
+        )
+
+        // Point camera directly at the cube.
+
+        cameraNode.lookAt(cameraTarget)
+
+        scene.rootNode.addChildNode(cameraNode)
+
+
+
+        // ================================================================
+
+        // Lighting
+
+        // ================================================================
+
+        // Ambient light
+
+        let ambientNode = SCNNode()
+
+        let ambientLight = SCNLight()
+
+        ambientLight.type = .ambient
+
+        ambientLight.intensity = 650.0
+
+        ambientLight.color = UIColor(
+
+            white: 0.75,
+
+            alpha: 1.0
+
+        )
+
+        ambientNode.light = ambientLight
+
+        scene.rootNode.addChildNode(ambientNode)
+
+
+
+        // Key light
+
+        let keyLightNode = SCNNode()
+
+        let keyLight = SCNLight()
+
+        keyLight.type = .omni
+
+        keyLight.intensity = 1400.0
+
+        keyLight.color = UIColor(
+
+            white: 1.0,
+
+            alpha: 1.0
+
+        )
+
+        keyLight.attenuationStartDistance = 5.0
+
+        keyLight.attenuationEndDistance = 50.0
+
+        keyLightNode.light = keyLight
+
+        keyLightNode.position = SCNVector3(
+
+            8.0,
+
+            13.0,
+
+            10.0
+
+        )
+
+        scene.rootNode.addChildNode(keyLightNode)
+
+
+
+        // Fill light
+
+        let fillLightNode = SCNNode()
+
+        let fillLight = SCNLight()
+
+        fillLight.type = .omni
+
+        fillLight.intensity = 900.0
+
+        fillLight.color = UIColor(
+
+            white: 0.85,
+
+            alpha: 1.0
+
+        )
+
+        fillLight.attenuationStartDistance = 5.0
+
+        fillLight.attenuationEndDistance = 45.0
+
+        fillLightNode.light = fillLight
+
+        fillLightNode.position = SCNVector3(
+
+            -10.0,
+
+            8.0,
+
+            -8.0
+
+        )
+
+        scene.rootNode.addChildNode(fillLightNode)
+
+    }
+
+    // MARK: - ENVIRONMENT
+
+    private func buildEnvironment() {
+
+        let baseGeometry =
+
+            SCNBox(
+
+                width: 20,
+
+                height: 0.35,
+
+                length: 15,
+
+                chamferRadius: 0.12
+
+            )
+
+        baseGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor(
+
+                white: 0.08,
+
+                alpha: 1
+
+            )
+
+        let base =
+
+            SCNNode(
+
+                geometry: baseGeometry
+
+            )
+
+        base.position =
+
+            SCNVector3(
+
+                0,
+
+                -0.25,
+
+                0
+
+            )
+
+        manufacturingRoot.addChildNode(
+
+            base
+
+        )
+
+        // -----------------------------------------------------
+
+        // PLATFORM
+
+        // -----------------------------------------------------
+
+        let platformGeometry =
+
+            SCNBox(
+
+                width: 9,
+
+                height: 0.3,
+
+                length: 9,
+
+                chamferRadius: 0.08
+
+            )
+
+        platformGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor(
+
+                white: 0.15,
+
+                alpha: 1
+
+            )
+
+        let platform =
+
+            SCNNode(
+
+                geometry: platformGeometry
+
+            )
+
+        platform.position =
+
+            SCNVector3(
+
+                -1.0,
+
+                0.05,
+
+                0
+
+            )
+
+        manufacturingRoot.addChildNode(
+
+            platform
+
+        )
+
+    }
+
+    // MARK: - QD JET PRINTER
+
+    private func buildQDJetPrinter() {
+
+        // -----------------------------------------------------
+
+        // RESERVOIR
+
+        // -----------------------------------------------------
+
+        let reservoirGeometry =
+
+            SCNCylinder(
+
+                radius: 0.7,
+
+                height: 1.8
+
+            )
+
+        reservoirGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemBlue
+
+        reservoirGeometry.firstMaterial?.emission.contents =
+
+            UIColor(
+
+                red: 0.0,
+
+                green: 0.0,
+
+                blue: 0.15,
+
+                alpha: 1.0
+
+            )
+
+        reservoir.geometry =
+
+            reservoirGeometry
+
+        reservoir.position =
+
+            SCNVector3(
+
+                -7.0,
+
+                4.0,
+
+                -1.0
+
+            )
+
+        printerRoot.addChildNode(
+
+            reservoir
+
+        )
+
+        // -----------------------------------------------------
+
+        // SUPPLY TUBE
+
+        // -----------------------------------------------------
+
+        let supplyTube =
+
+            makeCylinder(
+
+                radius: 0.10,
+
+                height: 3.6,
+
+                color: UIColor.systemBlue
+
+            )
+
+        supplyTube.position =
+
+            SCNVector3(
+
+                -5.2,
+
+                4.0,
+
+                -1.0
+
+            )
+
+        supplyTube.eulerAngles.z =
+
+            .pi / 2
+
+        printerRoot.addChildNode(
+
+            supplyTube
+
+        )
+
+        // -----------------------------------------------------
+
+        // GANTRY
+
+        // -----------------------------------------------------
+
+        let gantryGeometry =
+
+            SCNBox(
+
+                width: 9,
+
+                height: 0.35,
+
+                length: 0.35,
+
+                chamferRadius: 0.05
+
+            )
+
+        gantryGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor(
+
+                white: 0.25,
+
+                alpha: 1
+
+            )
+
+        let gantry =
+
+            SCNNode(
+
+                geometry: gantryGeometry
+
+            )
+
+        gantry.position =
+
+            SCNVector3(
+
+                -1.5,
+
+                7.0,
+
+                0
+
+            )
+
+        printerRoot.addChildNode(
+
+            gantry
+
+        )
+
+        // -----------------------------------------------------
+
+        // CARRIAGE
+
+        // -----------------------------------------------------
+
+        let carriageGeometry =
+
+            SCNBox(
+
+                width: 0.65,
+
+                height: 0.65,
+
+                length: 0.65,
+
+                chamferRadius: 0.08
+
+            )
+
+        carriageGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemGray
+
+        nozzleCarriage.geometry =
+
+            carriageGeometry
+
+        nozzleCarriage.position =
+
+            SCNVector3(
+
+                -2,
+
+                6.5,
+
+                0
+
+            )
+
+        printerRoot.addChildNode(
+
+            nozzleCarriage
+
+        )
+
+        // -----------------------------------------------------
+
+        // NOZZLE
+
+        // -----------------------------------------------------
+
+        let nozzleGeometry =
+
+            SCNCone(
+
+                topRadius: 0.11,
+
+                bottomRadius: 0.025,
+
+                height: 0.85
+
+            )
+
+        nozzleGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemOrange
+
+        nozzleGeometry.firstMaterial?.emission.contents =
+
+            UIColor.systemOrange
+
+        nozzle.geometry =
+
+            nozzleGeometry
+
+        nozzle.position =
+
+            SCNVector3(
+
+                -2,
+
+                5.9,
+
+                0
+
+            )
+
+        printerRoot.addChildNode(
+
+            nozzle
+
+        )
+
+    }
+
+    // MARK: - 3D LATTICE
+
+    private func buildLattice() {
+
+        qdNodes.removeAll()
+
+        let startX =
+
+            -Float(parameters.columns - 1)
+
+            *
+
+            parameters.latticeSpacing
+
+            *
+
+            0.5
+
+        let startZ =
+
+            -Float(parameters.rows - 1)
+
+            *
+
+            parameters.latticeSpacing
+
+            *
+
+            0.5
+
+        let startY: Float = 0.75
+
+        // -----------------------------------------------------
+
+        // QD STORAGE SITES
+
+        // -----------------------------------------------------
+
+        for layer in 0..<parameters.layers {
+
+            for row in 0..<parameters.rows {
+
+                for column in 0..<parameters.columns {
+
+                    let geometry =
+
+                        SCNSphere(
+
+                            radius:
+
+                                parameters.qdRadius
+
+                        )
+
+                    geometry.firstMaterial?.diffuse.contents =
+
+                        UIColor.systemTeal
+
+                    geometry.firstMaterial?.emission.contents =
+
+                        UIColor.systemTeal
+
+                    let qd =
+
+                        SCNNode(
+
+                            geometry: geometry
+
+                        )
+
+                    qd.name =
+
+                        "QD_\\(column)_\\(row)_\\(layer)"
+
+                    qd.position =
+
+                        SCNVector3(
+
+                            startX +
+
+                            Float(column)
+
+                            *
+
+                            parameters.latticeSpacing,
+
+                            startY +
+
+                            Float(layer)
+
+                            *
+
+                            parameters.latticeSpacing,
+
+                            startZ +
+
+                            Float(row)
+
+                            *
+
+                            parameters.latticeSpacing
+
+                        )
+
+                    qd.opacity = 0
+
+                    qd.scale =
+
+                        SCNVector3(
+
+                            0.01,
+
+                            0.01,
+
+                            0.01
+
+                        )
+
+                    qdNodes.append(qd)
+
+                    latticeRoot.addChildNode(
+
+                        qd
+
+                    )
+
+                }
+
+            }
+
+        }
+
+        // -----------------------------------------------------
+
+        // BUILD LAYER VOLUMES
+
+        // -----------------------------------------------------
+
+        let width =
+
+            CGFloat(parameters.columns)
+
+            *
+
+            CGFloat(parameters.latticeSpacing)
+
+        let depth =
+
+            CGFloat(parameters.rows)
+
+            *
+
+            CGFloat(parameters.latticeSpacing)
+
+        let layerHeight =
+
+            CGFloat(parameters.latticeSpacing)
+
+        for layer in 0..<parameters.layers {
+
+            let geometry =
+
+                SCNBox(
+
+                    width: width,
+
+                    height: layerHeight,
+
+                    length: depth,
+
+                    chamferRadius: 0.03
+
+                )
+
+            let material =
+
+                SCNMaterial()
+
+            material.diffuse.contents =
+
+                UIColor(
+
+                    red: 0.0,
+
+                    green: 1.0,
+
+                    blue: 1.0,
+
+                    alpha: 0.08
+
+                )
+
+            material.emission.contents =
+
+                UIColor(
+
+                    red: 0.0,
+
+                    green: 0.05,
+
+                    blue: 0.05,
+
+                    alpha: 0.04
+
+                )
+
+            material.isDoubleSided =
+
+                true
+
+            geometry.materials =
+
+                [material]
+
+            let volume =
+
+                SCNNode(
+
+                    geometry: geometry
+
+                )
+
+            volume.position =
+
+                SCNVector3(
+
+                    0,
+
+                    0.75 +
+
+                    Float(layer)
+
+                    *
+
+                    parameters.latticeSpacing,
+
+                    0
+
+                )
+
+            volume.opacity = 0
+
+            latticeRoot.addChildNode(
+
+                volume
+
+            )
+
+            layerVolumes.append(
+
+                volume
+
+            )
+
+        }
+
+        createFinalCubeOutline()
+
+    }
+
+    // MARK: - FINAL CUBE OUTLINE
+
+    private func createFinalCubeOutline() {
+
+        let width =
+
+            CGFloat(parameters.columns)
+
+            *
+
+            CGFloat(parameters.latticeSpacing)
+
+        let depth =
+
+            CGFloat(parameters.rows)
+
+            *
+
+            CGFloat(parameters.latticeSpacing)
+
+        let height =
+
+            CGFloat(parameters.layers)
+
+            *
+
+            CGFloat(parameters.latticeSpacing)
+
+        let cube =
+
+            SCNBox(
+
+                width: width + 0.15,
+
+                height: height + 0.15,
+
+                length: depth + 0.15,
+
+                chamferRadius: 0.03
+
+            )
+
+        let material =
+
+            SCNMaterial()
+
+        material.diffuse.contents =
+
+            UIColor.systemCyan
+
+        material.emission.contents =
+
+            UIColor.systemCyan
+
+        material.fillMode =
+
+            .lines
+
+        material.transparency =
+
+            0.55
+
+        cube.materials =
+
+            [material]
+
+        let cubeNode =
+
+            SCNNode(
+
+                geometry: cube
+
+            )
+
+        cubeNode.position =
+
+            SCNVector3(
+
+                0,
+
+                0.75 +
+
+                Float(height / 2.0),
+
+                0
+
+            )
+
+        cubeNode.opacity = 0
+
+        latticeRoot.addChildNode(
+
+            cubeNode
+
+        )
+
+        latticeCube =
+
+            cubeNode
+
+    }
+
+    // MARK: - DWORD STORAGE VISUALIZATION
+
+    private func buildDWORDStorageIndicators() {
+        dwordBarrierNodes.removeAll()
+
+        let count = min(32, qdNodes.count)
+        for index in 0..<count {
+            let geometry = SCNTorus(
+                ringRadius: 0.18,
+                pipeRadius: 0.025
+            )
+            geometry.firstMaterial?.diffuse.contents = UIColor.systemGray
+            geometry.firstMaterial?.emission.contents = UIColor.clear
+
+            let barrier = SCNNode(geometry: geometry)
+            barrier.name = "dwordBarrier_\(index)"
+            barrier.position = qdNodes[index].position
+            barrier.opacity = 0.0
+
+            latticeRoot.addChildNode(barrier)
+            dwordBarrierNodes.append(barrier)
+        }
+    }
+
+    func updateDWORDStorageVisualization(_ metrics: QRTLDWordMetrics) {
+        guard dwordBarrierNodes.count == 32 else { return }
+
+        let hasTestData = metrics.totalBitsTested > 0 || metrics.writeCommand != 0
+
+        for index in 0..<32 {
+            let bit = metrics.bitStates[index]
+            let barrier = dwordBarrierNodes[index]
+            guard let material = barrier.geometry?.firstMaterial else { continue }
+
+            barrier.opacity = hasTestData ? 1.0 : 0.0
+
+            if bit == 1 {
+                material.diffuse.contents = UIColor.systemGreen
+                material.emission.contents = UIColor.systemGreen
+                barrier.scale = SCNVector3(1.35, 1.35, 1.35)
+            } else {
+                material.diffuse.contents = UIColor.systemGray
+                material.emission.contents = UIColor.clear
+                barrier.scale = SCNVector3(0.90, 0.90, 0.90)
+            }
+        }
+    }
+
+    // MARK: - ROBOTIC ARM
+
+    private func buildRoboticWireSystem() {
+
+        // -----------------------------------------------------
+
+        // ROBOT BASE
+
+        // -----------------------------------------------------
+
+        let baseGeometry =
+
+            SCNCylinder(
+
+                radius: 1.0,
+
+                height: 0.55
+
+            )
+
+        baseGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemGray
+
+        let base =
+
+            SCNNode(
+
+                geometry: baseGeometry
+
+            )
+
+        base.position =
+
+            SCNVector3(
+
+                7.0,
+
+                0.45,
+
+                0
+
+            )
+
+        robotRoot.addChildNode(
+
+            base
+
+        )
+
+        // -----------------------------------------------------
+
+        // ARM
+
+        // -----------------------------------------------------
+
+        let armGeometry =
+
+            SCNCylinder(
+
+                radius: 0.25,
+
+                height: 3.2
+
+            )
+
+        armGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemGray2
+
+        robotArm.geometry =
+
+            armGeometry
+
+        robotArm.position =
+
+            SCNVector3(
+
+                7.0,
+
+                2.2,
+
+                0
+
+            )
+
+        robotRoot.addChildNode(
+
+            robotArm
+
+        )
+
+        // -----------------------------------------------------
+
+        // FOREARM
+
+        // -----------------------------------------------------
+
+        let forearmGeometry =
+
+            SCNCylinder(
+
+                radius: 0.20,
+
+                height: 2.6
+
+            )
+
+        forearmGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemGray3
+
+        robotForearm.geometry =
+
+            forearmGeometry
+
+        robotForearm.position =
+
+            SCNVector3(
+
+                7.0,
+
+                4.8,
+
+                0
+
+            )
+
+        robotRoot.addChildNode(
+
+            robotForearm
+
+        )
+
+        // -----------------------------------------------------
+
+        // GRIPPER
+
+        // -----------------------------------------------------
+
+        let gripperGeometry =
+
+            SCNBox(
+
+                width: 0.55,
+
+                height: 0.28,
+
+                length: 0.55,
+
+                chamferRadius: 0.04
+
+            )
+
+        gripperGeometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemOrange
+
+        gripperGeometry.firstMaterial?.emission.contents =
+
+            UIColor(
+
+                red: 0.15,
+
+                green: 0.06,
+
+                blue: 0,
+
+                alpha: 1
+
+            )
+
+        robotGripper.geometry =
+
+            gripperGeometry
+
+        robotGripper.position =
+
+            SCNVector3(
+
+                7.0,
+
+                6.0,
+
+                0
+
+            )
+
+        robotRoot.addChildNode(
+
+            robotGripper
+
+        )
+
+    }
+
+    // MARK: - ACCESS-WIRE
+
+    private func createAccessWire(
+
+        index: Int,
+
+        x: Float,
+
+        z: Float
+
+    ) -> SCNNode {
+
+        let cubeHeight =
+
+            Float(parameters.layers)
+
+            *
+
+            parameters.latticeSpacing
+
+        let geometry =
+
+            SCNCylinder(
+
+                radius: 0.045,
+
+                height:
+
+                    CGFloat(cubeHeight + 0.8)
+
+            )
+
+        geometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemYellow
+
+        geometry.firstMaterial?.emission.contents =
+
+            UIColor(
+
+                red: 0.20,
+
+                green: 0.16,
+
+                blue: 0,
+
+                alpha: 1
+
+            )
+
+        let wire =
+
+            SCNNode(
+
+                geometry: geometry
+
+            )
+
+        wire.name =
+
+            "ACCESS_WIRE_\\(index)"
+
+        wire.position =
+
+            SCNVector3(
+
+                x,
+
+                0.75 +
+
+                cubeHeight / 2.0,
+
+                z
+
+            )
+
+        return wire
+
+    }
+
+    // MARK: - DATA INTERFACE
+
+    private func buildDataInterface() {
+
+        let geometry =
+
+            SCNBox(
+
+                width: 3.5,
+
+                height: 0.65,
+
+                length: 3.5,
+
+                chamferRadius: 0.10
+
+            )
+
+        geometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemIndigo
+
+        geometry.firstMaterial?.emission.contents =
+
+            UIColor(
+
+                red: 0.05,
+
+                green: 0,
+
+                blue: 0.15,
+
+                alpha: 1
+
+            )
+
+        let interfaceNode =
+
+            SCNNode(
+
+                geometry: geometry
+
+            )
+
+        interfaceNode.position =
+
+            SCNVector3(
+
+                7,
+
+                0.85,
+
+                -4
+
+            )
+
+        dataRoot.addChildNode(
+
+            interfaceNode
+
+        )
+
+    }
+
+    // MARK: - START MANUFACTURING
+
+    func startManufacturing() {
+
+        animationGeneration += 1
+
+        let generation =
+
+            animationGeneration
+
+        // -----------------------------------------------------
+
+        // RESET QDs
+
+        // -----------------------------------------------------
+
+        for qd in qdNodes {
+
+            qd.removeAllActions()
+
+            qd.opacity = 0
+
+            qd.scale =
+
+                SCNVector3(
+
+                    0.01,
+
+                    0.01,
+
+                    0.01
+
+                )
+
+        }
+
+        // -----------------------------------------------------
+
+        // RESET LAYER VOLUMES
+
+        // -----------------------------------------------------
+
+        for volume in layerVolumes {
+
+            volume.removeAllActions()
+
+            volume.opacity = 0
+
+        }
+
+        // -----------------------------------------------------
+
+        // RESET CUBE
+
+        // -----------------------------------------------------
+
+        latticeCube?.removeAllActions()
+
+        latticeCube?.opacity = 0
+
+        // -----------------------------------------------------
+
+        // REMOVE WIRES
+
+        // -----------------------------------------------------
+
+        for wire in accessWires {
+
+            wire.removeAllActions()
+
+            wire.removeFromParentNode()
+
+        }
+
+        accessWires.removeAll()
+
+        // -----------------------------------------------------
+
+        // REMOVE DATA PARTICLES
+
+        // -----------------------------------------------------
+
+        for particle in dataParticles {
+
+            particle.removeAllActions()
+
+            particle.removeFromParentNode()
+
+        }
+
+        dataParticles.removeAll()
+
+        // -----------------------------------------------------
+
+        // RESET NOZZLE
+
+        // -----------------------------------------------------
+
+        nozzle.removeAllActions()
+
+        nozzle.position =
+
+            SCNVector3(
+
+                -2,
+
+                5.9,
+
+                0
+
+            )
+
+        nozzleCarriage.removeAllActions()
+
+        nozzleCarriage.position =
+
+            SCNVector3(
+
+                -2,
+
+                6.5,
+
+                0
+
+            )
+
+        // -----------------------------------------------------
+
+        // UPDATE STATE
+
+        // -----------------------------------------------------
+
+        let rateModel =
+
+            QRTLDataRateModel(
+
+                parameters: parameters
+
+            )
+
+        state?.update(
+
+            layer: 0,
+
+            deposited: 0,
+
+            total: qdNodes.count,
+
+            wires: 0,
+
+            totalWires: parameters.wireCount,
+
+            state: "QD-JET INITIALIZING",
+
+            rateModel: rateModel
+
+        )
+
+        // -----------------------------------------------------
+
+        // START FIRST LAYER
+
+        // -----------------------------------------------------
+
+        animateLayer(
+
+            layer: 0,
+
+            generation: generation
+
+        )
+
+    }
+
+    // MARK: - LAYER PRINTING
+
+    private func animateLayer(
+
+        layer: Int,
+
+        generation: Int
+
+    ) {
+
+        // ---------------------------------------------------------
+
+        // CANCEL OLD ANIMATION
+
+        // ---------------------------------------------------------
+
+        guard generation == animationGeneration else {
+
+            return
+
+        }
+
+        // ---------------------------------------------------------
+
+        // ALL LAYERS COMPLETE
+
+        // ---------------------------------------------------------
+
+        guard layer < parameters.layers else {
+
+            finishLattice(
+
+                generation: generation
+
+            )
+
+            return
+
+        }
+
+        // ---------------------------------------------------------
+
+        // LAYER INDEX RANGE
+
+        // ---------------------------------------------------------
+
+        let sitesPerLayer =
+
+            parameters.columns *
+
+            parameters.rows
+
+        let layerStartIndex =
+
+            layer *
+
+            sitesPerLayer
+
+        let layerEndIndex =
+
+            layerStartIndex +
+
+            sitesPerLayer
+
+        // ---------------------------------------------------------
+
+        // RATE MODEL
+
+        // ---------------------------------------------------------
+
+        let rateModel =
+
+            QRTLDataRateModel(
+
+                parameters: parameters
+
+            )
+
+        // ---------------------------------------------------------
+
+        // UPDATE STATE
+
+        // ---------------------------------------------------------
+
+        state?.update(
+
+            layer: layer + 1,
+
+            deposited: layerStartIndex,
+
+            total: qdNodes.count,
+
+            wires: accessWires.count,
+
+            totalWires: parameters.wireCount,
+
+            state:
+
+                "QD DEPOSITION — LAYER \\(layer + 1)/\\(parameters.layers)",
+
+            rateModel: rateModel
+
+        )
+
+        // ---------------------------------------------------------
+
+        // SHOW CURRENT LAYER VOLUME
+
+        // ---------------------------------------------------------
+
+        if layer < layerVolumes.count {
+
+            let layerVolume =
+
+                layerVolumes[layer]
+
+            layerVolume.removeAllActions()
+
+            layerVolume.opacity = 0
+
+            layerVolume.runAction(
+
+                SCNAction.fadeIn(
+
+                    duration: 0.25
+
+                )
+
+            )
+
+        }
+
+        // ---------------------------------------------------------
+
+        // PRINT TIMING
+
+        //
+
+        // The visual jet lasts 0.12 seconds.
+
+        //
+
+        // The old interval was 0.035 seconds.
+
+        //
+
+        // That caused multiple jets to overlap heavily.
+
+        //
+
+        // 0.14 seconds gives the viewer a clear:
+
+        //
+
+        // nozzle movement
+
+        //       ↓
+
+        // jet
+
+        //       ↓
+
+        // QD placement
+
+        //       ↓
+
+        // next QD
+
+        // ---------------------------------------------------------
+
+        let printInterval:
+
+            TimeInterval = 0.14
+
+        // ---------------------------------------------------------
+
+        // LOCAL INDEX
+
+        //
+
+        // This replaces the nonexistent
+
+        // depositedQDsInCurrentLayer property.
+
+        // ---------------------------------------------------------
+
+        var index =
+
+            layerStartIndex
+
+        // ---------------------------------------------------------
+
+        // PRINT NEXT QD
+
+        // ---------------------------------------------------------
+
+        func printNextQD() {
+
+            guard generation ==
+
+                    self.animationGeneration
+
+            else {
+
+                return
+
+            }
+
+            // -----------------------------------------------------
+
+            // LAYER COMPLETE
+
+            // -----------------------------------------------------
+
+            guard index < layerEndIndex else {
+
+                DispatchQueue.main.asyncAfter(
+
+                    deadline:
+
+                        .now() + 0.30
+
+                ) {
+
+                    guard generation ==
+
+                            self.animationGeneration
+
+                    else {
+
+                        return
+
+                    }
+
+                    self.animateLayer(
+
+                        layer: layer + 1,
+
+                        generation: generation
+
+                    )
+
+                }
+
+                return
+
+            }
+
+            // -----------------------------------------------------
+
+            // GET QD
+
+            // -----------------------------------------------------
+
+            guard index < self.qdNodes.count else {
+
+                return
+
+            }
+
+            let qd =
+
+                self.qdNodes[index]
+
+            // -----------------------------------------------------
+
+            // CONVERT QD POSITION
+
+            //
+
+            // qd.position is LOCAL to latticeRoot.
+
+            //
+
+            // The nozzle and jet belong to printerRoot.
+
+            //
+
+            // Convert the QD local position into printerRoot space.
+
+            // -----------------------------------------------------
+
+            let targetInPrinterSpace =
+
+                self.latticeRoot.convertPosition(
+
+                    qd.position,
+
+                    to: self.printerRoot
+
+                )
+
+            // -----------------------------------------------------
+
+            // NOZZLE POSITION
+
+            //
+
+            // Keep the nozzle at the printing height.
+
+            // -----------------------------------------------------
+
+            let nozzleTarget =
+
+                SCNVector3(
+
+                    targetInPrinterSpace.x,
+
+                    5.9,
+
+                    targetInPrinterSpace.z
+
+                )
+
+            let carriageTarget =
+
+                SCNVector3(
+
+                    targetInPrinterSpace.x,
+
+                    6.5,
+
+                    targetInPrinterSpace.z
+
+                )
+
+            // -----------------------------------------------------
+
+            // MOVE NOZZLE
+
+            // -----------------------------------------------------
+
+            let moveNozzle =
+
+                SCNAction.move(
+
+                    to: nozzleTarget,
+
+                    duration: 0.025
+
+                )
+
+            // -----------------------------------------------------
+
+            // PRINT QD
+
+            // -----------------------------------------------------
+
+            let printAction =
+
+                SCNAction.run { [weak self, weak qd] _ in
+
+                    guard let self = self else {
+
+                        return
+
+                    }
+
+                    guard let qd = qd else {
+
+                        return
+
+                    }
+
+                    guard generation ==
+
+                            self.animationGeneration
+
+                    else {
+
+                        return
+
+                    }
+
+                    // -------------------------------------------------
+
+                    // CREATE VISIBLE JET
+
+                    //
+
+                    // targetInPrinterSpace is ALREADY in printerRoot
+
+                    // coordinate space.
+
+                    //
+
+                    // Do NOT convert it again.
+
+                    // -------------------------------------------------
+
+                    self.animateQDJet(
+
+                        from: self.nozzle.position,
+
+                        to: targetInPrinterSpace
+
+                    )
+
+                    // -------------------------------------------------
+
+                    // MAKE QD VISIBLE
+
+                    // -------------------------------------------------
+
+                    qd.removeAllActions()
+
+                    qd.opacity = 0
+
+                    qd.scale =
+
+                        SCNVector3(
+
+                            0.01,
+
+                            0.01,
+
+                            0.01
+
+                        )
+
+                    // -------------------------------------------------
+
+                    // QD APPEARANCE
+
+                    // -------------------------------------------------
+
+                    let appear =
+
+                        SCNAction.group(
+
+                            [
+
+                                SCNAction.fadeIn(
+
+                                    duration: 0.025
+
+                                ),
+
+                                SCNAction.scale(
+
+                                    to: 1.0,
+
+                                    duration: 0.045
+
+                                )
+
+                            ]
+
+                        )
+
+                    qd.runAction(
+
+                        appear
+
+                    )
+
+                    // -------------------------------------------------
+
+                    // UPDATE MANUFACTURING STATE
+
+                    // -------------------------------------------------
+
+                    let deposited =
+
+                        index + 1
+
+                    let rateModel =
+
+                        QRTLDataRateModel(
+
+                            parameters:
+
+                                self.parameters
+
+                        )
+
+                    self.state?.update(
+
+                        layer:
+
+                            layer + 1,
+
+                        deposited:
+
+                            deposited,
+
+                        total:
+
+                            self.qdNodes.count,
+
+                        wires:
+
+                            self.accessWires.count,
+
+                        totalWires:
+
+                            self.parameters.wireCount,
+
+                        state:
+
+                            "QD DEPOSITION — LAYER \\(layer + 1)/\\(self.parameters.layers)",
+
+                        rateModel:
+
+                            rateModel
+
+                    )
+
+                }
+
+            // -----------------------------------------------------
+
+            // NOZZLE → PRINT
+
+            // -----------------------------------------------------
+
+            self.nozzle.runAction(
+
+                SCNAction.sequence(
+
+                    [
+
+                        moveNozzle,
+
+                        printAction
+
+                    ]
+
+                )
+
+            )
+
+            // -----------------------------------------------------
+
+            // CARRIAGE
+
+            // -----------------------------------------------------
+
+            self.nozzleCarriage.runAction(
+
+                SCNAction.move(
+
+                    to: carriageTarget,
+
+                    duration: 0.025
+
+                )
+
+            )
+
+            // -----------------------------------------------------
+
+            // ADVANCE INDEX
+
+            // -----------------------------------------------------
+
+            index += 1
+
+            // -----------------------------------------------------
+
+            // SCHEDULE NEXT QD
+
+            // -----------------------------------------------------
+
+            DispatchQueue.main.asyncAfter(
+
+                deadline:
+
+                    .now() + printInterval
+
+            ) {
+
+                guard generation ==
+
+                        self.animationGeneration
+
+                else {
+
+                    return
+
+                }
+
+                printNextQD()
+
+            }
+
+        }
+
+        // ---------------------------------------------------------
+
+        // START PRINTING
+
+        // ---------------------------------------------------------
+
+        printNextQD()
+
+    }
+
+    // MARK: - QD JET
+
+    private func animateQDJet(
+
+        from start: SCNVector3,
+
+        to targetInPrinterSpace: SCNVector3
+
+    ) {
+
+        // ---------------------------------------------------------
+
+        // CREATE JET PARTICLE
+
+        // ---------------------------------------------------------
+
+        let geometry =
+
+            SCNSphere(
+
+                radius: 0.045
+
+            )
+
+        geometry.firstMaterial?.diffuse.contents =
+
+            UIColor.systemOrange
+
+        geometry.firstMaterial?.emission.contents =
+
+            UIColor.systemOrange
+
+        let jet =
+
+            SCNNode(
+
+                geometry: geometry
+
+            )
+
+        // ---------------------------------------------------------
+
+        // IMPORTANT:
+
+        //
+
+        // jet is a child of printerRoot.
+
+        //
+
+        // Therefore both start and target MUST be in printerRoot
+
+        // coordinate space.
+
+        //
+
+        // animateLayer() already converted the target.
+
+        //
+
+        // DO NOT perform another latticeRoot conversion here.
+
+        // ---------------------------------------------------------
+
+        jet.position =
+
+            start
+
+        printerRoot.addChildNode(
+
+            jet
+
+        )
+
+        // ---------------------------------------------------------
+
+        // JET MOVEMENT
+
+        // ---------------------------------------------------------
+
+        let move =
+
+            SCNAction.move(
+
+                to: targetInPrinterSpace,
+
+                duration: 0.12
+
+            )
+
+        // ---------------------------------------------------------
+
+        // JET SCALE
+
+        // ---------------------------------------------------------
+
+        let scale =
+
+            SCNAction.sequence(
+
+                [
+
+                    SCNAction.scale(
+
+                        to: 1.5,
+
+                        duration: 0.06
+
+                    ),
+
+                    SCNAction.scale(
+
+                        to: 0.5,
+
+                        duration: 0.06
+
+                    )
+
+                ]
+
+            )
+
+        // ---------------------------------------------------------
+
+        // COMPLETE ANIMATION
+
+        // ---------------------------------------------------------
+
+        let animation =
+
+            SCNAction.group(
+
+                [
+
+                    move,
+
+                    scale
+
+                ]
+
+            )
+
+        // ---------------------------------------------------------
+
+        // REMOVE AFTER COMPLETION
+
+        // ---------------------------------------------------------
+
+        jet.runAction(
+
+            SCNAction.sequence(
+
+                [
+
+                    animation,
+
+                    SCNAction.removeFromParentNode()
+
+                ]
+
+            )
+
+        )
+
+    }
+
+    // MARK: - COMPLETE CUBE
+
+    private func finishLattice(
+
+        generation: Int
+
+    ) {
+
+        guard generation ==
+
+                animationGeneration
+
+        else {
+
+            return
+
+        }
+
+        // ---------------------------------------------------------
+
+        // UPDATE STATE
+
+        // ---------------------------------------------------------
+
+        let rateModel =
+
+            QRTLDataRateModel(
+
+                parameters: parameters
+
+            )
+
+        state?.update(
+
+            layer: parameters.layers,
+
+            deposited: qdNodes.count,
+
+            total: qdNodes.count,
+
+            wires: 0,
+
+            totalWires: parameters.wireCount,
+
+            state: "3D QD LATTICE COMPLETED",
+
+            rateModel: rateModel
+
+        )
+
+        // ---------------------------------------------------------
+
+        // SHOW COMPLETE CUBE
+
+        // ---------------------------------------------------------
+
+        latticeCube?.removeAllActions()
+
+        latticeCube?.opacity = 0
+
+        latticeCube?.runAction(
+
+            SCNAction.fadeIn(
+
+                duration: 0.8
+
+            )
+
+        )
+
+        // ---------------------------------------------------------
+
+        // CUBE PULSE
+
+        // ---------------------------------------------------------
+
+        let pulse =
+
+            SCNAction.sequence(
+
+                [
+
+                    SCNAction.fadeOpacity(
+
+                        to: 0.35,
+
+                        duration: 0.5
+
+                    ),
+
+                    SCNAction.fadeOpacity(
+
+                        to: 0.75,
+
+                        duration: 0.5
+
+                    )
+
+                ]
+
+            )
+
+        latticeCube?.runAction(
+
+            SCNAction.sequence(
+
+                [
+
+                    SCNAction.wait(
+
+                        duration: 0.8
+
+                    ),
+
+                    SCNAction.repeat(
+
+                        pulse,
+
+                        count: 2
+
+                    )
+
+                ]
+
+            )
+
+        )
+
+        // ---------------------------------------------------------
+
+        // START ROBOTIC WIRE PLACEMENT
+
+        // ---------------------------------------------------------
+
+        DispatchQueue.main.asyncAfter(
+
+            deadline:
+
+                .now() + 1.8
+
+        ) {
+
+            guard generation ==
+
+                    self.animationGeneration
+
+            else {
+
+                return
+
+            }
+
+            self.animateRoboticWirePlacement(
+
+                generation: generation
+
+            )
+
+        }
+
+    }
+
+    // MARK: - ROBOTIC ACCESS WIRES
+
+    private func animateRoboticWirePlacement(
+
+        generation: Int
+
+    ) {
+
+        guard generation ==
+
+                animationGeneration
+
+        else {
+
+            return
+
+        }
+
+        state?.status =
+
+            "ROBOTIC ACCESS-WIRE PLACEMENT"
+
+        placeWire(
+
+            index: 0,
+
+            generation: generation
+
+        )
+
+    }
+
+    // MARK: - PLACE WIRE
+
+    private func placeWire(
+
+        index: Int,
+
+        generation: Int
+
+    ) {
+
+        guard generation ==
+
+                animationGeneration
+
+        else {
+
+            return
+
+        }
+
+        guard index <
+
+                parameters.wireCount
+
+        else {
+
+            let rateModel =
+
+                QRTLDataRateModel(
+
+                    parameters: parameters
+
+                )
+
+            state?.update(
+
+                layer: parameters.layers,
+
+                deposited: qdNodes.count,
+
+                total: qdNodes.count,
+
+                wires: parameters.wireCount,
+
+                totalWires: parameters.wireCount,
+
+                state: "ACCESS WIRES REGISTERED",
+
+                rateModel: rateModel
+
+            )
+
+            DispatchQueue.main.asyncAfter(
+
+                deadline:
+
+                    .now() + 0.8
+
+            ) {
+
+                guard generation ==
+
+                        self.animationGeneration
+
+                else {
+
+                    return
+
+                }
+
+                self.animateDataTransfer(
+
+                    generation: generation
+
+                )
+
+            }
+
+            return
+
+        }
+
+        // ---------------------------------------------------------
+
+        // SELECT LATTICE COLUMN
+
+        // ---------------------------------------------------------
+
+        let column =
+
+            index %
+
+            parameters.columns
+
+        let row =
+
+            (index /
+
+             parameters.columns)
+
+            %
+
+            parameters.rows
+
+        let startX =
+
+            -Float(parameters.columns - 1)
+
+            *
+
+            parameters.latticeSpacing
+
+            *
+
+            0.5
+
+        let startZ =
+
+            -Float(parameters.rows - 1)
+
+            *
+
+            parameters.latticeSpacing
+
+            *
+
+            0.5
+
+        let targetX =
+
+            startX +
+
+            Float(column)
+
+            *
+
+            parameters.latticeSpacing
+
+        let targetZ =
+
+            startZ +
+
+            Float(row)
+
+            *
+
+            parameters.latticeSpacing
+
+        // ---------------------------------------------------------
+
+        // CREATE WIRE
+
+        // ---------------------------------------------------------
+
+        let wire =
+
+            createAccessWire(
+
+                index: index,
+
+                x: targetX,
+
+                z: targetZ
+
+            )
+
+        let cubeHeight =
+
+            Float(parameters.layers)
+
+            *
+
+            parameters.latticeSpacing
+
+        let wireTopY =
+
+            0.75 +
+
+            cubeHeight +
+
+            0.45
+
+        let wireBottomY =
+
+            0.75 +
+
+            cubeHeight / 2.0
+
+        // ---------------------------------------------------------
+
+        // START AT ROBOT
+
+        // ---------------------------------------------------------
+
+        wire.position =
+
+            SCNVector3(
+
+                7,
+
+                wireTopY + 3,
+
+                0
+
+            )
+
+        wire.opacity = 0
+
+        wireRoot.addChildNode(
+
+            wire
+
+        )
+
+        accessWires.append(
+
+            wire
+
+        )
+
+        // ---------------------------------------------------------
+
+        // ROBOT MOVEMENT
+
+        // ---------------------------------------------------------
+
+        let moveRobotToPickup =
+
+            SCNAction.move(
+
+                to:
+
+                    SCNVector3(
+
+                        7,
+
+                        wireTopY + 2.5,
+
+                        0
+
+                    ),
+
+                duration: 0.30
+
+            )
+
+        let moveToLattice =
+
+            SCNAction.move(
+
+                to:
+
+                    SCNVector3(
+
+                        targetX,
+
+                        wireTopY,
+
+                        targetZ
+
+                    ),
+
+                duration: 0.45
+
+            )
+
+        let descendWire =
+
+            SCNAction.move(
+
+                to:
+
+                    SCNVector3(
+
+                        targetX,
+
+                        wireBottomY,
+
+                        targetZ
+
+                    ),
+
+                duration: 0.65
+
+            )
+
+        // ---------------------------------------------------------
+
+        // WIRE MOVEMENT
+
+        // ---------------------------------------------------------
+
+        wire.runAction(
+
+            SCNAction.sequence(
+
+                [
+
+                    SCNAction.move(
+
+                        to:
+
+                            SCNVector3(
+
+                                targetX,
+
+                                wireTopY,
+
+                                targetZ
+
+                            ),
+
+                        duration: 0.45
+
+                    ),
+
+                    SCNAction.fadeIn(
+
+                        duration: 0.20
+
+                    ),
+
+                    descendWire,
+
+                    SCNAction.run { [weak self] _ in
+
+                        guard let self = self else {
+
+                            return
+
+                        }
+
+                        guard generation ==
+
+                                self.animationGeneration
+
+                        else {
+
+                            return
+
+                        }
+
+                        let rateModel =
+
+                            QRTLDataRateModel(
+
+                                parameters:
+
+                                    self.parameters
+
+                            )
+
+                        self.state?.update(
+
+                            layer:
+
+                                self.parameters.layers,
+
+                            deposited:
+
+                                self.qdNodes.count,
+
+                            total:
+
+                                self.qdNodes.count,
+
+                            wires:
+
+                                index + 1,
+
+                            totalWires:
+
+                                self.parameters.wireCount,
+
+                            state:
+
+                                "WIRE \\(index + 1) REGISTERED",
+
+                            rateModel:
+
+                                rateModel
+
+                        )
+
+                    }
+
+                ]
+
+            )
+
+        )
+
+        // ---------------------------------------------------------
+
+        // GRIPPER
+
+        // ---------------------------------------------------------
+
+        robotGripper.runAction(
+
+            SCNAction.sequence(
+
+                [
+
+                    moveRobotToPickup,
+
+                    moveToLattice,
+
+                    SCNAction.move(
+
+                        to:
+
+                            SCNVector3(
+
+                                targetX,
+
+                                wireBottomY + 0.5,
+
+                                targetZ
+
+                            ),
+
+                        duration: 0.65
+
+                    )
+
+                ]
+
+            )
+
+        )
+
+        // ---------------------------------------------------------
+
+        // FOREARM
+
+        // ---------------------------------------------------------
+
+        robotForearm.runAction(
+
+            SCNAction.move(
+
+                to:
+
+                    SCNVector3(
+
+                        targetX,
+
+                        4.8,
+
+                        targetZ
+
+                    ),
+
+                duration: 1.4
+
+            )
+
+        )
+
+        // ---------------------------------------------------------
+
+        // NEXT WIRE
+
+        // ---------------------------------------------------------
+
+        DispatchQueue.main.asyncAfter(
+
+            deadline:
+
+                .now() +
+
+                parameters.wireAnimationDuration +
+
+                0.55
+
+        ) {
+
+            guard generation ==
+
+                    self.animationGeneration
+
+            else {
+
+                return
+
+            }
+
+            self.placeWire(
+
+                index: index + 1,
+
+                generation: generation
+
+            )
+
+        }
+
+    }
+
+    // MARK: - DATA TRANSFER
+
+    private func animateDataTransfer(
+
+        generation: Int
+
+    ) {
+
+        guard generation ==
+
+                animationGeneration
+
+        else {
+
+            return
+
+        }
+
+        state?.status =
+
+            "READ / WRITE DATA TRANSFER"
+
+        createWriteParticles()
+
+        DispatchQueue.main.asyncAfter(
+
+            deadline:
+
+                .now() + 1.5
+
+        ) {
+
+            guard generation ==
+
+                    self.animationGeneration
+
+            else {
+
+                return
+
+            }
+
+            self.createReadParticles()
+
+        }
+
+        DispatchQueue.main.asyncAfter(
+
+            deadline:
+
+                .now() + 3.0
+
+        ) {
+
+            guard generation ==
+
+                    self.animationGeneration
+
+            else {
+
+                return
+
+            }
+
+            self.state?.status =
+
+                "3D MEMORY ONLINE"
+
+        }
+
+    }
+
+    // MARK: - WRITE DATA
+
+    private func createWriteParticles() {
+
+        guard !qdNodes.isEmpty else {
+
+            return
+
+        }
+
+        let count =
+
+            parameters.dataParticleCount
+
+        for i in 0..<count {
+
+            let geometry =
+
+                SCNSphere(
+
+                    radius: 0.075
+
+                )
+
+            geometry.firstMaterial?.diffuse.contents =
+
+                UIColor.systemGreen
+
+            geometry.firstMaterial?.emission.contents =
+
+                UIColor.systemGreen
+
+            let particle =
+
+                SCNNode(
+
+                    geometry: geometry
+
+                )
+
+            // -----------------------------------------------------
+
+            // DATA INTERFACE IS UNDER dataRoot.
+
+            // -----------------------------------------------------
+
+            let source =
+
+                SCNVector3(
+
+                    7,
+
+                    1.5,
+
+                    -4
+
+                )
+
+            particle.position =
+
+                source
+
+            dataRoot.addChildNode(
+
+                particle
+
+            )
+
+            dataParticles.append(
+
+                particle
+
+            )
+
+            // -----------------------------------------------------
+
+            // CONVERT QD FROM latticeRoot → dataRoot
+
+            // -----------------------------------------------------
+
+            let qd =
+
+                qdNodes[
+
+                    i %
+
+                    qdNodes.count
+
+                ]
+
+            let qdWorldPosition =
+
+                qd.convertPosition(
+
+                    SCNVector3Zero,
+
+                    to: scene.rootNode
+
+                )
+
+            let target =
+
+                dataRoot.convertPosition(
+
+                    qdWorldPosition,
+
+                    from: scene.rootNode
+
+                )
+
+            // -----------------------------------------------------
+
+            // MOVE
+
+            // -----------------------------------------------------
+
+            let move =
+
+                SCNAction.move(
+
+                    to: target,
+
+                    duration: 0.9
+
+                )
+
+            // -----------------------------------------------------
+
+            // PULSE
+
+            // -----------------------------------------------------
+
+            let pulse =
+
+                SCNAction.sequence(
+
+                    [
+
+                        SCNAction.scale(
+
+                            to: 1.4,
+
+                            duration: 0.12
+
+                        ),
+
+                        SCNAction.scale(
+
+                            to: 1.0,
+
+                            duration: 0.12
+
+                        )
+
+                    ]
+
+                )
+
+            // -----------------------------------------------------
+
+            // COMPLETE ANIMATION
+
+            // -----------------------------------------------------
+
+            let animation =
+
+                SCNAction.group(
+
+                    [
+
+                        move,
+
+                        pulse
+
+                    ]
+
+                )
+
+            particle.runAction(
+
+                SCNAction.sequence(
+
+                    [
+
+                        animation,
+
+                        SCNAction.fadeOut(
+
+                            duration: 0.15
+
+                        ),
+
+                        SCNAction.removeFromParentNode()
+
+                    ]
+
+                )
+
+            )
+
+        }
+
+    }
+
+    // MARK: - READ DATA
+
+    private func createReadParticles() {
+
+        guard !qdNodes.isEmpty else {
+
+            return
+
+        }
+
+        let count =
+
+            parameters.dataParticleCount
+
+        for i in 0..<count {
+
+            let geometry =
+
+                SCNSphere(
+
+                    radius: 0.075
+
+                )
+
+            geometry.firstMaterial?.diffuse.contents =
+
+                UIColor.systemCyan
+
+            geometry.firstMaterial?.emission.contents =
+
+                UIColor.systemCyan
+
+            let particle =
+
+                SCNNode(
+
+                    geometry: geometry
+
+                )
+
+            let qd =
+
+                qdNodes[
+
+                    i %
+
+                    qdNodes.count
+
+                ]
+
+            // -----------------------------------------------------
+
+            // QD WORLD POSITION
+
+            // -----------------------------------------------------
+
+            let qdWorldPosition =
+
+                qd.convertPosition(
+
+                    SCNVector3Zero,
+
+                    to: scene.rootNode
+
+                )
+
+            // -----------------------------------------------------
+
+            // CONVERT WORLD → dataRoot
+
+            // -----------------------------------------------------
+
+            let source =
+
+                dataRoot.convertPosition(
+
+                    qdWorldPosition,
+
+                    from: scene.rootNode
+
+                )
+
+            particle.position =
+
+                source
+
+            dataRoot.addChildNode(
+
+                particle
+
+            )
+
+            dataParticles.append(
+
+                particle
+
+            )
+
+            // -----------------------------------------------------
+
+            // DATA INTERFACE TARGET
+
+            // -----------------------------------------------------
+
+            let interfaceWorldPosition =
+
+                dataRoot.convertPosition(
+
+                    SCNVector3(
+
+                        7,
+
+                        1.5,
+
+                        -4
+
+                    ),
+
+                    to: scene.rootNode
+
+                )
+
+            let target =
+
+                dataRoot.convertPosition(
+
+                    interfaceWorldPosition,
+
+                    from: scene.rootNode
+
+                )
+
+            // -----------------------------------------------------
+
+            // READ ANIMATION
+
+            // -----------------------------------------------------
+
+            particle.runAction(
+
+                SCNAction.sequence(
+
+                    [
+
+                        SCNAction.move(
+
+                            to: target,
+
+                            duration: 1.0
+
+                        ),
+
+                        SCNAction.fadeOut(
+
+                            duration: 0.15
+
+                        ),
+
+                        SCNAction.removeFromParentNode()
+
+                    ]
+
+                )
+
+            )
+
+        }
+
+    }
+
+    // MARK: - UTILITY
+
+    private func makeCylinder(
+
+        radius: CGFloat,
+
+        height: CGFloat,
+
+        color: UIColor
+
+    ) -> SCNNode {
+
+        let geometry =
+
+            SCNCylinder(
+
+                radius: radius,
+
+                height: height
+
+            )
+
+        geometry.firstMaterial?.diffuse.contents =
+
+            color
+
+        return SCNNode(
+
+            geometry: geometry
+
+        )
+
+    }
+
+}
+
+// MARK: - SCNNode LOOK AT
+
+private extension SCNNode {
+
+    func lookAt(
+
+        _ target: SCNVector3
+
+    ) {
+
+        let dx =
+
+            target.x - position.x
+
+        let dy =
+
+            target.y - position.y
+
+        let dz =
+
+            target.z - position.z
+
+        let horizontal =
+
+            sqrt(
+
+                dx * dx +
+
+                dz * dz
+
+            )
+
+        eulerAngles.y =
+
+            atan2(
+
+                dx,
+
+                dz
+
+            )
+
+        eulerAngles.x =
+
+            -atan2(
+
+                dy,
+
+                horizontal
+
+            )
+
+    }
+
+}
+
+// MARK: - SWIFTUI SCENE VIEW
+
+struct QRTLQDJet3DPrintingView:
+
+    UIViewRepresentable {
+
+    @ObservedObject
+
+    var state:
+
+        QRTLManufacturingState
+
+    let parameters:
+
+        QRTLMemoryParameters
+
+    // ---------------------------------------------------------
+
+    // MAKE VIEW
+
+    // ---------------------------------------------------------
+
+    func makeUIView(
+
+        context: Context
+
+    ) -> SCNView {
+
+        let builder =
+
+            QRTLQDJet3DPrintingScene(
+
+                parameters:
+
+                    parameters,
+
+                state:
+
+                    state
+
+            )
+
+        context.coordinator.builder =
+
+            builder
+
+        let view =
+
+            SCNView()
+
+        view.scene =
+
+            builder.scene
+
+        // -----------------------------------------------------
+
+        // SCENEKIT RENDER LOOP
+
+        // -----------------------------------------------------
+
+        view.isPlaying =
+
+            true
+
+        view.rendersContinuously =
+
+            true
+
+        view.preferredFramesPerSecond =
+
+            60
+
+        view.scene?.isPaused =
+
+            false
+
+        // -----------------------------------------------------
+
+        // CAMERA
+
+        // -----------------------------------------------------
+
+        view.allowsCameraControl =
+
+            true
+
+        // -----------------------------------------------------
+
+        // LIGHTING
+
+        // -----------------------------------------------------
+
+        view.autoenablesDefaultLighting =
+
+            false
+
+        // -----------------------------------------------------
+
+        // APPEARANCE
+
+        // -----------------------------------------------------
+
+        view.backgroundColor =
+
+            UIColor.black
+
+        view.showsStatistics =
+
+            false
+
+        // -----------------------------------------------------
+
+        // START MANUFACTURING
+
+        // -----------------------------------------------------
+
+        builder.startManufacturing()
+
+        return view
+
+    }
+
+    // ---------------------------------------------------------
+
+    // UPDATE VIEW
+
+    // ---------------------------------------------------------
+
+    func updateUIView(
+
+        _ uiView: SCNView,
+
+        context: Context
+
+    ) {
+
+        uiView.isPlaying =
+
+            true
+
+        uiView.rendersContinuously =
+
+            true
+
+        uiView.scene?.isPaused =
+
+            false
+
+        context.coordinator.builder?.updateDWORDStorageVisualization(
+            state.dwordMetrics
+        )
+
+    }
+
+    // ---------------------------------------------------------
+
+    // COORDINATOR
+
+    // ---------------------------------------------------------
+
+    func makeCoordinator()
+
+        -> Coordinator
+
+    {
+
+        Coordinator()
+
+    }
+
+    @MainActor
+
+    final class Coordinator {
+
+        var builder:
+
+            QRTLQDJet3DPrintingScene?
+
+    }
+
+}
+
+// MARK: - CONTENT VIEW
+
+struct ContentView: View {
+    @StateObject private var state = QRTLManufacturingState()
+    private let parameters = QRTLMemoryParameters()
+
+    @State private var selectedDWORD: Int = 0
+    @State private var retentionInterval: Double = 1.0
+    @State private var cycleCount: Int = 100
+
+    private let testDWORDs: [UInt32] = [
         0x00000000,
         0xFFFFFFFF,
         0xAAAAAAAA,
@@ -161,1649 +4623,395 @@ final class QRTLMemoryTestState: ObservableObject {
         0xA5A5A5A5
     ]
 
-    @Published var selectedDWORDIndex: Int = 0
-
-    // ------------------------------------------------------------
-    // CURRENT TEST
-    // ------------------------------------------------------------
-
-    @Published var memoryAddress: UInt32 = 0
-
-    @Published var writeCommand: UInt32 = 0
-
-    @Published var returnedDWORD: UInt32 = 0
-
-    @Published var status: String = "READY"
-
-    // ------------------------------------------------------------
-    // BIT INFORMATION
-    // ------------------------------------------------------------
-
-    @Published var bitStates: [Int] =
-        Array(repeating: 0, count: 32)
-
-    @Published var detectedBits: [Int] =
-        Array(repeating: 0, count: 32)
-
-    @Published var readSignals: [Double] =
-        Array(repeating: 0, count: 32)
-
-    // ------------------------------------------------------------
-    // METRICS
-    // ------------------------------------------------------------
-
-    @Published var writeTimeSeconds: Double = 0
-
-    @Published var readTimeSeconds: Double = 0
-
-    @Published var writeAccuracyPercent: Double = 0
-
-    @Published var readAccuracyPercent: Double = 0
-
-    @Published var retentionPercent: Double = 0
-
-    @Published var retentionSeconds: Double = 0
-
-    @Published var requestedCycles: Int = 0
-
-    @Published var successfulCycles: Int = 0
-
-    @Published var cycleSuccessRatePercent: Double = 0
-
-    @Published var incorrectBits: Int = 0
-
-    @Published var totalBitsTested: Int = 0
-
-    @Published var errorRatePercent: Double = 0
-
-    @Published var verificationPassed: Bool = false
-
-    // ------------------------------------------------------------
-    // PHYSICAL MEMORY MODEL
-    // ------------------------------------------------------------
-
-    private var memoryCells: [Int: Int] = [:]
-
-    // ------------------------------------------------------------
-    // READ SIGNAL MODEL
-    // ------------------------------------------------------------
-
-    //
-    // Simulated signal levels:
-    //
-    // 0 → LOW_SIGNAL
-    // 1 → HIGH_SIGNAL
-    //
-    // The threshold determines whether the measured signal
-    // is interpreted as 0 or 1.
-    //
-
-    let lowSignal: Double = 0.10
-    let highSignal: Double = 1.00
-
-    let readThreshold: Double = 0.50
-
-    // ------------------------------------------------------------
-    // TIMING MODEL
-    // ------------------------------------------------------------
-
-    let simulatedWriteTimePerBit: Double = 0.000001
-    let simulatedReadTimePerBit: Double = 0.0000005
-
-    // ------------------------------------------------------------
-    // WRITE DWORD
-    // ------------------------------------------------------------
-
-    func writeDWORD(
-        address: UInt32,
-        value: UInt32
-    ) {
-
-        memoryAddress = address
-        writeCommand = value
-
-        let start = CFAbsoluteTimeGetCurrent()
-
-        let dwordNumber =
-            Int((address - baseAddress) / 4)
-
-        let startingCell =
-            dwordNumber * 32
-
-        for bitIndex in 0..<32 {
-
-            // ----------------------------------------------------
-            // Equation:
-            //
-            // bᵢ = (D >> i) & 1
-            // ----------------------------------------------------
-
-            let bit =
-                Int((value >> UInt32(bitIndex)) & 1)
-
-            let cellIndex =
-                startingCell + bitIndex
-
-            memoryCells[cellIndex] = bit
-
-            bitStates[bitIndex] = bit
-        }
-
-        let measured =
-            CFAbsoluteTimeGetCurrent() - start
-
-        // Ensure the simulation reports the modeled operation
-        // time rather than zero when the CPU operation is too fast.
-        writeTimeSeconds =
-            max(
-                measured,
-                simulatedWriteTimePerBit * 32
-            )
-
-        // --------------------------------------------------------
-        // WRITE ACCURACY
-        //
-        // Correct writes / attempted writes × 100
-        // --------------------------------------------------------
-
-        var correct = 0
-
-        for bitIndex in 0..<32 {
-
-            let expected =
-                Int((value >> UInt32(bitIndex)) & 1)
-
-            let cellIndex =
-                startingCell + bitIndex
-
-            let stored =
-                memoryCells[cellIndex] ?? 0
-
-            if stored == expected {
-                correct += 1
-            }
-        }
-
-        writeAccuracyPercent =
-            Double(correct) / 32.0 * 100.0
-
-        status = "DWORD WRITTEN"
-    }
-
-    // ------------------------------------------------------------
-    // READ DWORD
-    // ------------------------------------------------------------
-
-    func readDWORD(
-        address: UInt32
-    ) -> UInt32 {
-
-        memoryAddress = address
-        readAddress = address
-
-        let start = CFAbsoluteTimeGetCurrent()
-
-        let dwordNumber =
-            Int((address - baseAddress) / 4)
-
-        let startingCell =
-            dwordNumber * 32
-
-        var reconstructed: UInt32 = 0
-
-        for bitIndex in 0..<32 {
-
-            let cellIndex =
-                startingCell + bitIndex
-
-            let physicalState =
-                memoryCells[cellIndex] ?? 0
-
-            // ----------------------------------------------------
-            // READ SIGNAL EQUATION
-            //
-            // Sᵢ = S₀ + (S₁ - S₀)bᵢ
-            // ----------------------------------------------------
-
-            let signal =
-                lowSignal +
-                (highSignal - lowSignal)
-                * Double(physicalState)
-
-            readSignals[bitIndex] = signal
-
-            // ----------------------------------------------------
-            // DETECTION EQUATION
-            //
-            // detected bit = 1 if signal >= threshold
-            // detected bit = 0 otherwise
-            // ----------------------------------------------------
-
-            let detected =
-                signal >= readThreshold ? 1 : 0
-
-            detectedBits[bitIndex] = detected
-
-            if detected == 1 {
-
-                reconstructed |=
-                    UInt32(1) << UInt32(bitIndex)
-            }
-        }
-
-        let measured =
-            CFAbsoluteTimeGetCurrent() - start
-
-        readTimeSeconds =
-            max(
-                measured,
-                simulatedReadTimePerBit * 32
-            )
-
-        returnedDWORD = reconstructed
-
-        status = "DWORD READ"
-
-        return reconstructed
-    }
-
-    // ------------------------------------------------------------
-    // VERIFY DWORD
-    // ------------------------------------------------------------
-
-    func verifyDWORD(
-        expected: UInt32,
-        returned: UInt32
-    ) {
-
-        var correctBits = 0
-
-        for bitIndex in 0..<32 {
-
-            let expectedBit =
-                Int(
-                    (expected >> UInt32(bitIndex)) & 1
-                )
-
-            let returnedBit =
-                Int(
-                    (returned >> UInt32(bitIndex)) & 1
-                )
-
-            if expectedBit == returnedBit {
-                correctBits += 1
-            }
-        }
-
-        // --------------------------------------------------------
-        // READ ACCURACY EQUATION
-        //
-        // Correct bits / total bits × 100
-        // --------------------------------------------------------
-
-        readAccuracyPercent =
-            Double(correctBits) / 32.0 * 100.0
-
-        incorrectBits =
-            32 - correctBits
-
-        totalBitsTested = 32
-
-        // --------------------------------------------------------
-        // ERROR RATE EQUATION
-        //
-        // Errors / total bits
-        // --------------------------------------------------------
-
-        errorRatePercent =
-            Double(incorrectBits)
-            / Double(totalBitsTested)
-            * 100.0
-
-        verificationPassed =
-            expected == returned
-
-        status =
-            verificationPassed
-            ? "MEMORY PASS"
-            : "MEMORY FAIL"
-    }
-
-    // ------------------------------------------------------------
-    // RETENTION TEST
-    // ------------------------------------------------------------
-
-    func testRetention(
-        address: UInt32,
-        expected: UInt32,
-        interval: Double
-    ) {
-
-        let originalBits = bitStates
-
-        // --------------------------------------------------------
-        // Simulated retention interval.
-        //
-        // The actual application can replace this with a real
-        // timed delay and physical measurement.
-        // --------------------------------------------------------
-
-        retentionSeconds = interval
-
-        let returned =
-            readDWORD(address: address)
-
-        var unchanged = 0
-
-        for bitIndex in 0..<32 {
-
-            if originalBits[bitIndex]
-                == detectedBits[bitIndex] {
-
-                unchanged += 1
-            }
-        }
-
-        // --------------------------------------------------------
-        // RETENTION EQUATION
-        //
-        // unchanged bits / tested bits × 100
-        // --------------------------------------------------------
-
-        retentionPercent =
-            Double(unchanged) / 32.0 * 100.0
-
-        returnedDWORD = returned
-    }
-
-    // ------------------------------------------------------------
-    // READ / WRITE CYCLE TEST
-    // ------------------------------------------------------------
-
-    func runCycles(
-        address: UInt32,
-        value: UInt32,
-        cycles: Int
-    ) {
-
-        requestedCycles = cycles
-        successfulCycles = 0
-
-        for _ in 0..<cycles {
-
-            writeDWORD(
-                address: address,
-                value: value
-            )
-
-            let returned =
-                readDWORD(
-                    address: address
-                )
-
-            if returned == value {
-                successfulCycles += 1
-            }
-        }
-
-        // --------------------------------------------------------
-        // CYCLE SUCCESS EQUATION
-        //
-        // successful cycles / total cycles × 100
-        // --------------------------------------------------------
-
-        if cycles > 0 {
-
-            cycleSuccessRatePercent =
-                Double(successfulCycles)
-                / Double(cycles)
-                * 100.0
-        } else {
-
-            cycleSuccessRatePercent = 0
-        }
-
-        // Update final verification.
-        verifyDWORD(
-            expected: value,
-            returned: returnedDWORD
-        )
-
-        status = "CYCLE TEST COMPLETE"
-    }
-
-    // ------------------------------------------------------------
-    // COMPLETE DWORD TEST
-    // ------------------------------------------------------------
-
-    func runCompleteTest(
-        dwordIndex: Int,
-        retentionInterval: Double = 1.0,
-        cycles: Int = 100
-    ) {
-
-        guard
-            dwordIndex >= 0,
-            dwordIndex < testDWORDs.count
-        else {
-            status = "INVALID DWORD INDEX"
-            return
-        }
-
-        selectedDWORDIndex = dwordIndex
-
-        let address =
-            baseAddress +
-            UInt32(dwordIndex * 4)
-
-        let value =
-            testDWORDs[dwordIndex]
-
-        // --------------------------------------------------------
-        // STEP 1
-        // WRITE
-        // --------------------------------------------------------
-
-        status = "WRITING DWORD..."
-
-        writeDWORD(
-            address: address,
-            value: value
-        )
-
-        // --------------------------------------------------------
-        // STEP 2
-        // READ
-        // --------------------------------------------------------
-
-        status = "READING DWORD..."
-
-        let returned =
-            readDWORD(
-                address: address
-            )
-
-        // --------------------------------------------------------
-        // STEP 3
-        // VERIFY
-        // --------------------------------------------------------
-
-        verifyDWORD(
-            expected: value,
-            returned: returned
-        )
-
-        // --------------------------------------------------------
-        // STEP 4
-        // RETENTION
-        // --------------------------------------------------------
-
-        testRetention(
-            address: address,
-            expected: value,
-            interval: retentionInterval
-        )
-
-        // --------------------------------------------------------
-        // STEP 5
-        // REPEATED CYCLES
-        // --------------------------------------------------------
-
-        runCycles(
-            address: address,
-            value: value,
-            cycles: cycles
-        )
-
-        // Restore final expected/read values.
-        writeCommand = value
-        memoryAddress = address
-        readAddress = address
-        returnedDWORD = returned
-
-        status =
-            verificationPassed
-            ? "DWORD TEST PASS"
-            : "DWORD TEST FAIL"
-    }
-
-    // ------------------------------------------------------------
-    // FORMAT DWORD
-    // ------------------------------------------------------------
-
-    func hexString(
-        _ value: UInt32
-    ) -> String {
-
-        String(
-            format: "0x%08X",
-            value
-        )
-    }
-
-    // ------------------------------------------------------------
-    // FORMAT BITS
-    // ------------------------------------------------------------
-
-    func binaryString(
-        _ value: UInt32
-    ) -> String {
-
-        let binary =
-            String(
-                value,
-                radix: 2
-            )
-
-        return String(
-            repeating: "0",
-            count: max(0, 32 - binary.count)
-        ) + binary
-    }
-}
-
-
-// MARK: - QRTL Memory Scene
-
-@MainActor
-final class QRTLMemoryScene {
-
-    let scene = SCNScene()
-
-    private let root = SCNNode()
-
-    private var bitNodes: [SCNNode] = []
-
-    private let spacing: Float = 0.65
-
-    init(
-        state: QRTLMemoryTestState
-    ) {
-
-        scene.rootNode.addChildNode(root)
-
-        configureScene()
-        buildLighting()
-        buildMemoryLattice()
-
-        updateBitVisualization(
-            state: state
-        )
-    }
-
-    // ------------------------------------------------------------
-    // SCENE CONFIGURATION
-    // ------------------------------------------------------------
-
-    private func configureScene() {
-
-        scene.background.contents =
-            UIColor.black
-
-        let cameraNode =
-            SCNNode()
-
-        let camera =
-            SCNCamera()
-
-        camera.fieldOfView = 45
-        camera.zNear = 0.1
-        camera.zFar = 100
-
-        cameraNode.camera = camera
-
-        cameraNode.position =
-            SCNVector3(
-                0,
-                10,
-                24
-            )
-
-        cameraNode.lookAt(
-            SCNVector3(
-                0,
-                0,
-                0
-            )
-        )
-
-        scene.rootNode.addChildNode(
-            cameraNode
-        )
-    }
-
-    // ------------------------------------------------------------
-    // LIGHTING
-    // ------------------------------------------------------------
-
-    private func buildLighting() {
-
-        let keyNode =
-            SCNNode()
-
-        let keyLight =
-            SCNLight()
-
-        keyLight.type = .omni
-        keyLight.intensity = 1200
-
-        keyLight.color =
-            UIColor.white
-
-        keyNode.light = keyLight
-
-        keyNode.position =
-            SCNVector3(
-                0,
-                12,
-                12
-            )
-
-        scene.rootNode.addChildNode(
-            keyNode
-        )
-
-        let fillNode =
-            SCNNode()
-
-        let fillLight =
-            SCNLight()
-
-        fillLight.type = .omni
-        fillLight.intensity = 600
-
-        fillLight.color =
-            UIColor(
-                red: 0.2,
-                green: 0.45,
-                blue: 1.0,
-                alpha: 1.0
-            )
-
-        fillNode.light = fillLight
-
-        fillNode.position =
-            SCNVector3(
-                -10,
-                5,
-                10
-            )
-
-        scene.rootNode.addChildNode(
-            fillNode
-        )
-    }
-
-    // ------------------------------------------------------------
-    // BUILD 32-BIT MEMORY LATTICE
-    // ------------------------------------------------------------
-
-    private func buildMemoryLattice() {
-
-        for bitIndex in 0..<32 {
-
-            let column =
-                bitIndex % 8
-
-            let row =
-                bitIndex / 8
-
-            let x =
-                Float(column - 3)
-                * spacing
-
-            let y =
-                Float(3 - row)
-                * spacing
-
-            let bitNode =
-                createBitNode(
-                    index: bitIndex
-                )
-
-            bitNode.position =
-                SCNVector3(
-                    x,
-                    y,
-                    0
-                )
-
-            root.addChildNode(
-                bitNode
-            )
-
-            bitNodes.append(
-                bitNode
-            )
-        }
-    }
-
-    // ------------------------------------------------------------
-    // CREATE INDIVIDUAL MEMORY CELL
-    // ------------------------------------------------------------
-
-    private func createBitNode(
-        index: Int
-    ) -> SCNNode {
-
-        let group =
-            SCNNode()
-
-        // --------------------------------------------------------
-        // QD STORAGE SITE
-        // --------------------------------------------------------
-
-        let sphereGeometry =
-            SCNSphere(
-                radius: 0.20
-            )
-
-        let sphereMaterial =
-            SCNMaterial()
-
-        sphereMaterial.diffuse.contents =
-            UIColor(
-                red: 0.05,
-                green: 0.20,
-                blue: 0.40,
-                alpha: 1.0
-            )
-
-        sphereMaterial.emission.contents =
-            UIColor(
-                red: 0.0,
-                green: 0.05,
-                blue: 0.15,
-                alpha: 1.0
-            )
-
-        sphereGeometry.firstMaterial =
-            sphereMaterial
-
-        let qd =
-            SCNNode(
-                geometry: sphereGeometry
-            )
-
-        group.addChildNode(qd)
-
-        // --------------------------------------------------------
-        // LATTICE BARRIER
-        //
-        // The torus visually represents the storage barrier.
-        //
-        // 0 = closed/dim
-        // 1 = active/bright
-        // --------------------------------------------------------
-
-        let barrierGeometry =
-            SCNTorus(
-                ringRadius: 0.28,
-                pipeRadius: 0.035
-            )
-
-        let barrierMaterial =
-            SCNMaterial()
-
-        barrierMaterial.diffuse.contents =
-            UIColor(
-                red: 0.10,
-                green: 0.15,
-                blue: 0.25,
-                alpha: 1.0
-            )
-
-        barrierMaterial.emission.contents =
-            UIColor(
-                red: 0.0,
-                green: 0.05,
-                blue: 0.10,
-                alpha: 1.0
-            )
-
-        barrierGeometry.firstMaterial =
-            barrierMaterial
-
-        let barrier =
-            SCNNode(
-                geometry: barrierGeometry
-            )
-
-        barrier.name =
-            "barrier_\(index)"
-
-        group.addChildNode(
-            barrier
-        )
-
-        return group
-    }
-
-    // ------------------------------------------------------------
-    // UPDATE VISUAL BIT STATES
-    // ------------------------------------------------------------
-
-    func updateBitVisualization(
-        state: QRTLMemoryTestState
-    ) {
-
-        guard bitNodes.count == 32 else {
-            return
-        }
-
-        for bitIndex in 0..<32 {
-
-            let bit =
-                state.bitStates[bitIndex]
-
-            let node =
-                bitNodes[bitIndex]
-
-            let barrier =
-                node.childNode(
-                    withName:
-                        "barrier_\(bitIndex)",
-                    recursively: true
-                )
-
-            guard
-                let material =
-                    barrier?
-                    .geometry?
-                    .firstMaterial
-            else {
-                continue
-            }
-
-            if bit == 1 {
-
-                material.diffuse.contents =
-                    UIColor(
-                        red: 0.05,
-                        green: 0.75,
-                        blue: 1.0,
-                        alpha: 1.0
-                    )
-
-                material.emission.contents =
-                    UIColor(
-                        red: 0.0,
-                        green: 0.35,
-                        blue: 1.0,
-                        alpha: 1.0
-                    )
-
-                node.scale =
-                    SCNVector3(
-                        1.25,
-                        1.25,
-                        1.25
-                    )
-
-            } else {
-
-                material.diffuse.contents =
-                    UIColor(
-                        red: 0.10,
-                        green: 0.15,
-                        blue: 0.25,
-                        alpha: 1.0
-                    )
-
-                material.emission.contents =
-                    UIColor(
-                        red: 0.0,
-                        green: 0.02,
-                        blue: 0.05,
-                        alpha: 1.0
-                    )
-
-                node.scale =
-                    SCNVector3(
-                        1.0,
-                        1.0,
-                        1.0
-                    )
-            }
-        }
-    }
-}
-
-
-// MARK: - SceneKit Camera Helper
-
-extension SCNNode {
-
-    func lookAt(
-        _ target: SCNVector3
-    ) {
-
-        let dx =
-            target.x - position.x
-
-        let dy =
-            target.y - position.y
-
-        let dz =
-            target.z - position.z
-
-        let horizontal =
-            sqrt(
-                dx * dx +
-                dz * dz
-            )
-
-        eulerAngles.y =
-            atan2(
-                dx,
-                dz
-            )
-
-        eulerAngles.x =
-            -atan2(
-                dy,
-                horizontal
-            )
-    }
-}
-
-
-// MARK: - SceneKit View
-
-struct QRTLMemorySceneView:
-    UIViewRepresentable {
-
-    @ObservedObject
-    var state: QRTLMemoryTestState
-
-    final class Coordinator {
-
-        var memoryScene:
-            QRTLMemoryScene?
-
-        var sceneView:
-            SCNView?
-    }
-
-    func makeCoordinator()
-        -> Coordinator {
-
-        Coordinator()
-    }
-
-    func makeUIView(
-        context: Context
-    ) -> SCNView {
-
-        let memoryScene =
-            QRTLMemoryScene(
-                state: state
-            )
-
-        context.coordinator.memoryScene =
-            memoryScene
-
-        let view =
-            SCNView(
-                frame: .zero
-            )
-
-        context.coordinator.sceneView =
-            view
-
-        view.scene =
-            memoryScene.scene
-
-        view.backgroundColor =
-            UIColor.black
-
-        view.isPlaying =
-            true
-
-        view.rendersContinuously =
-            true
-
-        view.preferredFramesPerSecond =
-            60
-
-        view.allowsCameraControl =
-            true
-
-        view.autoenablesDefaultLighting =
-            false
-
-        view.showsStatistics =
-            false
-
-        return view
-    }
-
-    func updateUIView(
-        _ view: SCNView,
-        context: Context
-    ) {
-
-        view.isPlaying =
-            true
-
-        view.rendersContinuously =
-            true
-
-        context.coordinator
-            .memoryScene?
-            .updateBitVisualization(
-                state: state
-            )
-    }
-}
-
-
-// MARK: - Content View
-
-struct ContentView: View {
-
-    @StateObject
-    private var memoryState =
-        QRTLMemoryTestState()
-
-    @State
-    private var selectedDWORD =
-        0
-
-    @State
-    private var retentionInterval =
-        1.0
-
-    @State
-    private var cycleCount =
-        100
-
     var body: some View {
-
-        NavigationStack {
+        VStack(spacing: 0) {
+            QRTLQDJet3DPrintingView(
+                state: state,
+                parameters: parameters
+            )
+            .frame(maxWidth: .infinity, minHeight: 400)
+            .frame(maxHeight: .infinity)
 
             ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("QRTL QD-JET 3D MEMORY")
+                        .font(.title2.bold())
 
-                VStack(
-                    spacing: 16
-                ) {
+                    Text(state.status)
+                        .font(.headline)
 
-                    // ====================================================
-                    // TITLE
-                    // ====================================================
+                    Divider()
 
-                    Text(
-                        "QRTL DWORD MEMORY VALIDATION"
-                    )
-                    .font(
-                        .title2.bold()
-                    )
+                    Text("3D QD PRINTING")
+                        .font(.headline)
+                    Text("Layer: \(state.currentLayer) / \(parameters.layers)")
+                    Text("QDs deposited: \(state.depositedQDs) / \(state.totalQDs)")
+                    Text("QD jet rate: \(state.qdPrintRate)")
 
-                    Text(
-                        "32-bit storage and retrieval test"
-                    )
-                    .foregroundStyle(
-                        .secondary
-                    )
+                    Divider()
 
-                    // ====================================================
-                    // MEMORY LATTICE
-                    // ====================================================
+                    Text("ROBOTIC ACCESS WIRES")
+                        .font(.headline)
+                    Text("Registered: \(state.placedWires) / \(state.totalWires)")
 
-                    QRTLMemorySceneView(
-                        state: memoryState
-                    )
-                    .frame(
-                        height: 430
-                    )
-                    .clipShape(
-                        RoundedRectangle(
-                            cornerRadius: 14
-                        )
-                    )
+                    Divider()
 
-                    // ====================================================
-                    // DWORD SELECTOR
-                    // ====================================================
+                    Text("MEMORY DATA TRANSFER")
+                        .font(.headline)
+                    Text("WRITE / INPUT: \(state.writeRate)")
+                    Text("READ / OUTPUT: \(state.readRate)")
+                    Text("WRITE: \(state.writeBytes)")
+                    Text("READ: \(state.readBytes)")
 
-                    VStack(
-                        alignment: .leading,
-                        spacing: 8
-                    ) {
+                    Divider()
 
-                        Text(
-                            "DWORD Test"
-                        )
-                        .font(
-                            .headline
-                        )
+                    Text("3D MEMORY CAPACITY")
+                        .font(.headline)
+                    Text(state.storageCapacity)
+                    Text("\(parameters.columns) × \(parameters.rows) × \(parameters.layers) QD sites")
 
-                        Picker(
-                            "DWORD",
-                            selection:
-                                $selectedDWORD
-                        ) {
+                    Divider()
 
-                            ForEach(
-                                0..<memoryState.testDWORDs.count,
-                                id: \.self
-                            ) { index in
+                    dwordTestPanel
 
-                                Text(
-                                    "DWORD \(index): "
-                                    + memoryState.hexString(
-                                        memoryState.testDWORDs[index]
-                                    )
-                                )
-                                .tag(index)
-                            }
-                        }
-                        .pickerStyle(
-                            .menu
-                        )
-                    }
+                    Divider()
 
-                    // ====================================================
-                    // TEST BUTTON
-                    // ====================================================
+                    Text("DATA-RATE EQUATIONS")
+                        .font(.headline)
+                    equation("C = NQD × BQD")
+                    equation("RIN = Nw × fw × BQD × Uw × ηw")
+                    equation("ROUT = Nr × fr × BQD × Ur × ηr")
+                    equation("RQD = fjet × QDs/event × U × η")
 
-                    Button {
+                    Divider()
 
-                        memoryState.runCompleteTest(
-                            dwordIndex:
-                                selectedDWORD,
-                            retentionInterval:
-                                retentionInterval,
-                            cycles:
-                                cycleCount
-                        )
-
-                    } label: {
-
-                        Label(
-                            "Run DWORD Test",
-                            systemImage:
-                                "memorychip"
-                        )
-                        .frame(
-                            maxWidth: .infinity
-                        )
-                    }
-                    .buttonStyle(
-                        .borderedProminent
-                    )
-
-                    // ====================================================
-                    // STATUS
-                    // ====================================================
-
-                    Text(
-                        memoryState.status
-                    )
-                    .font(
-                        .headline
-                    )
-                    .foregroundStyle(
-                        memoryState.verificationPassed
-                        ? .green
-                        : .primary
-                    )
-
-                    // ====================================================
-                    // BASIC DWORD INFORMATION
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "DWORD Identification"
-                    ) {
-
-                        metricRow(
-                            "Memory Address",
-                            String(
-                                format:
-                                    "0x%08X",
-                                memoryState.memoryAddress
-                            )
-                        )
-
-                        metricRow(
-                            "Write Command",
-                            memoryState.hexString(
-                                memoryState.writeCommand
-                            )
-                        )
-
-                        metricRow(
-                            "Read Command",
-                            String(
-                                format:
-                                    "0x%08X",
-                                memoryState.readAddress
-                            )
-                        )
-
-                        metricRow(
-                            "Returned DWORD",
-                            memoryState.hexString(
-                                memoryState.returnedDWORD
-                            )
-                        )
-                    }
-
-                    // ====================================================
-                    // BIT STATE
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Bit State"
-                    ) {
-
-                        metricRow(
-                            "Stored Bits",
-                            memoryState.binaryString(
-                                memoryState.writeCommand
-                            )
-                        )
-
-                        metricRow(
-                            "Detected Bits",
-                            memoryState.binaryString(
-                                memoryState.returnedDWORD
-                            )
-                        )
-
-                        metricRow(
-                            "Bit Count",
-                            "32"
-                        )
-                    }
-
-                    // ====================================================
-                    // TIMING
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Timing"
-                    ) {
-
-                        metricRow(
-                            "Write Time",
-                            formatSeconds(
-                                memoryState.writeTimeSeconds
-                            )
-                        )
-
-                        metricRow(
-                            "Read Time",
-                            formatSeconds(
-                                memoryState.readTimeSeconds
-                            )
-                        )
-
-                        metricRow(
-                            "Retention Interval",
-                            String(
-                                format:
-                                    "%.3f s",
-                                memoryState.retentionSeconds
-                            )
-                        )
-                    }
-
-                    // ====================================================
-                    // READ SIGNAL
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Read Signal"
-                    ) {
-
-                        metricRow(
-                            "Signal 0",
-                            String(
-                                format:
-                                    "%.3f",
-                                memoryState.lowSignal
-                            )
-                        )
-
-                        metricRow(
-                            "Signal 1",
-                            String(
-                                format:
-                                    "%.3f",
-                                memoryState.highSignal
-                            )
-                        )
-
-                        metricRow(
-                            "Detection Threshold",
-                            String(
-                                format:
-                                    "%.3f",
-                                memoryState.readThreshold
-                            )
-                        )
-
-                        metricRow(
-                            "Read Signals",
-                            signalSummary()
-                        )
-                    }
-
-                    // ====================================================
-                    // ACCURACY
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Accuracy"
-                    ) {
-
-                        metricRow(
-                            "Write Accuracy",
-                            percent(
-                                memoryState.writeAccuracyPercent
-                            )
-                        )
-
-                        metricRow(
-                            "Read Accuracy",
-                            percent(
-                                memoryState.readAccuracyPercent
-                            )
-                        )
-
-                        metricRow(
-                            "Bit Retention",
-                            percent(
-                                memoryState.retentionPercent
-                            )
-                        )
-                    }
-
-                    // ====================================================
-                    // CYCLES
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Read / Write Cycles"
-                    ) {
-
-                        metricRow(
-                            "Requested Cycles",
-                            "\(memoryState.requestedCycles)"
-                        )
-
-                        metricRow(
-                            "Successful Cycles",
-                            "\(memoryState.successfulCycles)"
-                        )
-
-                        metricRow(
-                            "Cycle Success Rate",
-                            percent(
-                                memoryState
-                                    .cycleSuccessRatePercent
-                            )
-                        )
-                    }
-
-                    // ====================================================
-                    // ERROR RATE
-                    // ====================================================
-
-                    metricSection(
-                        title:
-                            "Error Analysis"
-                    ) {
-
-                        metricRow(
-                            "Incorrect Bits",
-                            "\(memoryState.incorrectBits)"
-                        )
-
-                        metricRow(
-                            "Total Bits Tested",
-                            "\(memoryState.totalBitsTested)"
-                        )
-
-                        metricRow(
-                            "Error Rate",
-                            percent(
-                                memoryState.errorRatePercent
-                            )
-                        )
-                    }
-
-                    // ====================================================
-                    // VERIFICATION
-                    // ====================================================
-
-                    VStack(
-                        spacing: 8
-                    ) {
-
-                        Text(
-                            "DWORD Verification"
-                        )
-                        .font(
-                            .headline
-                        )
-
-                        HStack {
-
-                            Text("EXPECTED")
-
-                            Spacer()
-
-                            Text(
-                                memoryState.hexString(
-                                    memoryState.writeCommand
-                                )
-                            )
-                            .monospaced()
-                        }
-
-                        HStack {
-
-                            Text("RETURNED")
-
-                            Spacer()
-
-                            Text(
-                                memoryState.hexString(
-                                    memoryState.returnedDWORD
-                                )
-                            )
-                            .monospaced()
-                        }
-
-                        Divider()
-
-                        Text(
-                            memoryState.verificationPassed
-                            ? "✓ MEMORY PASS"
-                            : "✕ MEMORY FAIL"
-                        )
-                        .font(
-                            .title3.bold()
-                        )
-                        .foregroundStyle(
-                            memoryState.verificationPassed
-                            ? .green
-                            : .red
-                        )
-                    }
-                    .padding()
-                    .background(
-                        RoundedRectangle(
-                            cornerRadius: 12
-                        )
-                        .fill(
-                            .thinMaterial
-                        )
-                    )
+                    Text("MODEL NOTE")
+                        .font(.headline)
+                    Text("The QD jet, 3D lattice construction, robotic wire placement, data particles, and DWORD read/write behavior are visualization and engineering simulation models. They are not experimental proof of QRTL physics or experimentally established QD-memory performance.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding()
             }
-            .navigationTitle(
-                "QRTL Memory"
-            )
+            .frame(maxHeight: 500)
         }
     }
 
-    // ================================================================
-    // METRIC SECTION
-    // ================================================================
+    private var dwordTestPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("DWORD STORAGE / RETRIEVAL TEST")
+                .font(.headline)
 
-    @ViewBuilder
-    private func metricSection<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
+            Picker("DWORD", selection: $selectedDWORD) {
+                ForEach(0..<testDWORDs.count, id: \.self) { index in
+                    Text("DWORD \(index): \(state.dwordHex(testDWORDs[index]))")
+                        .tag(index)
+                }
+            }
+            .pickerStyle(.menu)
 
-        VStack(
-            alignment: .leading,
-            spacing: 8
-        ) {
+            HStack {
+                Text("Retention")
+                Slider(value: $retentionInterval, in: 0.1...10.0, step: 0.1)
+                Text(String(format: "%.1f s", retentionInterval))
+                    .monospaced()
+            }
 
-            Text(title)
-                .font(
-                    .headline
+            HStack {
+                Text("Cycles")
+                Stepper("\(cycleCount)", value: $cycleCount, in: 1...10000, step: 1)
+            }
+
+            Button {
+                state.runDWORDTest(
+                    address: state.dwordBaseAddress + UInt32(selectedDWORD * 4),
+                    value: testDWORDs[selectedDWORD],
+                    retentionInterval: retentionInterval,
+                    cycles: cycleCount
                 )
+            } label: {
+                Label("Run DWORD Test", systemImage: "memorychip")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
 
-            content()
+            metric("Memory Address", state.dwordHex(state.dwordMetrics.memoryAddress))
+            metric("Cell Range", "\(state.dwordMetrics.cellStartIndex)–\(state.dwordMetrics.cellEndIndex)")
+            metric("Write Command", state.dwordHex(state.dwordMetrics.writeCommand))
+            metric("Read Address", state.dwordHex(state.dwordMetrics.readAddress))
+            metric("Stored Bits", state.dwordBinary(state.dwordMetrics.writeCommand))
+            metric("Detected Bits", state.dwordBinary(state.dwordMetrics.returnedDWORD))
+            metric("Returned DWORD", state.dwordHex(state.dwordMetrics.returnedDWORD))
+            metric("Write Time", formatTime(state.dwordMetrics.writeTimeSeconds))
+            metric("Read Time", formatTime(state.dwordMetrics.readTimeSeconds))
+            metric("Write Accuracy", String(format: "%.4f %%", state.dwordMetrics.writeAccuracyPercent))
+            metric("Read Accuracy", String(format: "%.4f %%", state.dwordMetrics.readAccuracyPercent))
+            metric("Retention", String(format: "%.4f %%", state.dwordMetrics.retentionPercent))
+            metric("Read/Write Cycles", "\(state.dwordMetrics.successfulCycles) / \(state.dwordMetrics.requestedCycles)")
+            metric("Cycle Success Rate", String(format: "%.4f %%", state.dwordMetrics.cycleSuccessRatePercent))
+            metric("Incorrect Bits", "\(state.dwordMetrics.incorrectBits) / \(state.dwordMetrics.totalBitsTested)")
+            metric("Error Rate", String(format: "%.4f %%", state.dwordMetrics.errorRatePercent))
+
+            Text(state.memoryTestStatus)
+                .font(.title3.bold())
+                .foregroundStyle(state.dwordMetrics.verificationPassed ? .green : .red)
+
+            Text("Equations")
+                .font(.subheadline.bold())
+            equation("Bit_i = (DWORD >> i) & 1")
+            equation("S_i = S0 + (S1 − S0) × Bit_i")
+            equation("Detected_i = 1 if S_i ≥ T, else 0")
+            equation("Accuracy = CorrectBits / 32 × 100")
+            equation("ErrorRate = IncorrectBits / TotalBits × 100")
+            equation("CycleSuccess = SuccessfulCycles / RequestedCycles × 100")
         }
         .padding()
-        .background(
-            RoundedRectangle(
-                cornerRadius: 12
-            )
-            .fill(
-                .thinMaterial
-            )
-        )
+        .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
     }
 
-    // ================================================================
-    // METRIC ROW
-    // ================================================================
-
-    private func metricRow(
-        _ title: String,
-        _ value: String
-    ) -> some View {
-
-        HStack {
-
+    private func metric(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
             Text(title)
-
             Spacer()
-
             Text(value)
-                .font(
-                    .system(
-                        .body,
-                        design: .monospaced
-                    )
-                )
-                .multilineTextAlignment(
-                    .trailing
-                )
+                .font(.system(.body, design: .monospaced))
+                .multilineTextAlignment(.trailing)
         }
     }
 
-    // ================================================================
-    // FORMAT PERCENT
-    // ================================================================
-
-    private func percent(
-        _ value: Double
-    ) -> String {
-
-        String(
-            format:
-                "%.4f %%",
-            value
-        )
+    private func equation(_ text: String) -> some View {
+        Text(text)
+            .font(.system(.body, design: .monospaced))
     }
 
-    // ================================================================
-    // FORMAT TIME
-    // ================================================================
-
-    private func formatSeconds(
-        _ value: Double
-    ) -> String {
-
-        if value < 0.001 {
-
-            return String(
-                format:
-                    "%.3f µs",
-                value * 1_000_000
-            )
-
-        } else if value < 1.0 {
-
-            return String(
-                format:
-                    "%.3f ms",
-                value * 1_000
-            )
-
-        } else {
-
-            return String(
-                format:
-                    "%.3f s",
-                value
-            )
+    private func formatTime(_ seconds: Double) -> String {
+        if seconds < 0.001 {
+            return String(format: "%.3f µs", seconds * 1_000_000)
+        } else if seconds < 1.0 {
+            return String(format: "%.3f ms", seconds * 1_000)
         }
-    }
-
-    // ================================================================
-    // READ SIGNAL SUMMARY
-    // ================================================================
-
-    private func signalSummary()
-        -> String {
-
-        guard
-            !memoryState.readSignals.isEmpty
-        else {
-            return "—"
-        }
-
-        let lowCount =
-            memoryState.readSignals
-                .filter {
-                    $0 < memoryState.readThreshold
-                }
-                .count
-
-        let highCount =
-            memoryState.readSignals
-                .filter {
-                    $0 >= memoryState.readThreshold
-                }
-                .count
-
-        return
-            "\(lowCount) LOW / \(highCount) HIGH"
+        return String(format: "%.3f s", seconds)
     }
 }
 
-
-// MARK: - Preview
+// MARK: - PREVIEW
 
 #Preview {
 
     ContentView()
+
+}
+
+// MARK: - LATTICE-BASED DATA TRANSFER MEASUREMENT
+
+extension QRTLDataRateModel {
+
+    // ---------------------------------------------------------
+
+    // EXPECTED LATTICE CONFIGURATION
+
+    // ---------------------------------------------------------
+
+    var latticeColumns: Int {
+
+        parameters.columns
+
+    }
+
+    var latticeRows: Int {
+
+        parameters.rows
+
+    }
+
+    var latticeLayers: Int {
+
+        parameters.layers
+
+    }
+
+    // ---------------------------------------------------------
+
+    // TOTAL STORAGE SITES
+
+    // ---------------------------------------------------------
+
+    var latticeQDSites: Int {
+
+        parameters.columns *
+
+        parameters.rows *
+
+        parameters.layers
+
+    }
+
+    // ---------------------------------------------------------
+
+    // TOTAL MEMORY
+
+    // ---------------------------------------------------------
+
+    var latticeStorageBits: Double {
+
+        Double(latticeQDSites) *
+
+        parameters.bitsPerQD
+
+    }
+
+    var latticeStorageBytes: Double {
+
+        latticeStorageBits / 8.0
+
+    }
+
+    // ---------------------------------------------------------
+
+    // ACCESS-WIRE ORGANIZATION
+
+    // ---------------------------------------------------------
+
+    var sitesPerAccessWire: Int {
+
+        parameters.sitesPerWire
+
+    }
+
+    var totalAccessWires: Int {
+
+        parameters.wireCount
+
+    }
+
+    // ---------------------------------------------------------
+
+    // CHANNEL CHECK
+
+    //
+
+    // Expected:
+
+    //
+
+    // 12 wires/channels × 40 sites = 480 sites
+
+    //
+
+    // ---------------------------------------------------------
+
+    var addressableSites: Int {
+
+        totalAccessWires *
+
+        sitesPerAccessWire
+
+    }
+
+    var addressableLatticeMatches: Bool {
+
+        addressableSites == latticeQDSites
+
+    }
+
+    // ---------------------------------------------------------
+
+    // MEASURED INPUT RATE
+
+    //
+
+    // Data entering the lattice.
+
+    // ---------------------------------------------------------
+
+    var measuredInputBitsPerSecond: Double {
+
+        parameters.writeChannels *
+
+        parameters.writeFrequencyHz *
+
+        parameters.bitsPerQD *
+
+        parameters.writeUtilization *
+
+        parameters.writeEfficiency
+
+    }
+
+    // ---------------------------------------------------------
+
+    // MEASURED OUTPUT RATE
+
+    //
+
+    // Data leaving the lattice.
+
+    // ---------------------------------------------------------
+
+    var measuredOutputBitsPerSecond: Double {
+
+        parameters.readChannels *
+
+        parameters.readFrequencyHz *
+
+        parameters.bitsPerQD *
+
+        parameters.readUtilization *
+
+        parameters.readEfficiency
+
+    }
+
+    // ---------------------------------------------------------
+
+    // BYTES / SECOND
+
+    // ---------------------------------------------------------
+
+    var measuredInputBytesPerSecond: Double {
+
+        measuredInputBitsPerSecond / 8.0
+
+    }
+
+    var measuredOutputBytesPerSecond: Double {
+
+        measuredOutputBitsPerSecond / 8.0
+
+    }
+
+    // ---------------------------------------------------------
+
+    // FULL-CUBE TRANSFER TIME
+
+    // ---------------------------------------------------------
+
+    var fullCubeWriteTime: TimeInterval {
+
+        guard measuredInputBitsPerSecond > 0 else {
+
+            return 0
+
+        }
+
+        return latticeStorageBits /
+
+            measuredInputBitsPerSecond
+
+    }
+
+    var fullCubeReadTime: TimeInterval {
+
+        guard measuredOutputBitsPerSecond > 0 else {
+
+            return 0
+
+        }
+
+        return latticeStorageBits /
+
+            measuredOutputBitsPerSecond
+
+    }
+
 }
